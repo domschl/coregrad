@@ -23,8 +23,24 @@ uv run python scripts/check_sources.py
 
 # 4. Run GPU throughput micro-benchmark
 uv run python scripts/bench_gpu.py --sweep
+
+# 5. Live training monitor (loss/BPB/probe plots + sample generations)
+uv run python scripts/monitor.py --port 8765
+
+# 6. Pretrain (Gate 1) -> Prepare Phase 3 data -> SFT & GRPO (Gate 2) -> Research CLI
+uv run python scripts/train.py --config configs/train_125m_base.yaml
+uv run python scripts/prepare_phase3_data.py
+uv run python scripts/train_sft.py --config configs/train_125m_sft.yaml
+uv run python scripts/train_grpo.py --init-from runs/coregrad_125m_sft/best.pt
+uv run python scripts/eval_gate2.py --checkpoint runs/coregrad_125m_grpo/best.pt
+uv run python scripts/research_cli.py index ./my_markdown_docs --use-embeddinggemma2
+uv run python scripts/research_cli.py chat --checkpoint runs/coregrad_125m_grpo/best.pt --index data/index/my_markdown_docs
 ```
 
 ## Architecture Highlights (`coregrad-125m`)
-- Decoder-only Transformer (~124M params): 16 layers, `d_model=768`, GQA (12 Q / 4 KV heads), SwiGLU (`d_ff=2048`), RoPE, Pre-RMSNorm + QK-Norm, tied 16k BPE embeddings, Flash SDPA, `torch.compile`.
+- Decoder-only Transformer (~126M params): 18 layers, `d_model=768`, GQA (12 Q / 4 KV heads), SwiGLU (`d_ff=2048`), RoPE, Pre-RMSNorm + QK-Norm, tied 16k BPE embeddings, Flash SDPA, `torch.compile`.
 - 100% open-licensed English pretraining, tool-use, and deterministic synthetic reasoning data through Gates 1–3.
+
+## Authors & AI Collaboration
+- **Project Concept & Direction:** `domschl`
+- **Architecture, Implementation & Planning:** Antigravity (Gemini 4 Neon, Google DeepMind) in collaboration with `domschl`
