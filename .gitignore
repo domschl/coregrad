@@ -1,0 +1,39 @@
+# Python & virtual environments
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
+# Local machine configuration & secrets (NEVER commit)
+configs/sources.local.yaml
+*.local.yaml
+*.local.toml
+.env
+.env.*
+
+# Data, shards, models, indexes, training runs (root-anchored so src/coregrad/data/ stays tracked)
+/data/
+/runs/
+/checkpoints/
+*.bin
+*.idx
+*.parquet
+*.arrow
+*.pt
+*.pth
+*.safetensors
+*.ckpt
+*.sqlite
+*.db
+
+# OS / editor artifacts
+.DS_Store
+._.DS_Store
+.vscode/
+.idea/
+*.swp

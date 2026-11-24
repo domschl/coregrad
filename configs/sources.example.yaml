@@ -1,0 +1,11 @@
+# Copy to configs/sources.local.yaml (gitignored) or set environment variables.
+# Never commit machine-specific paths to this repository.
+
+# Directory where downloaded Hugging Face datasets are stored as <org>/<repo>/...
+# Env override: COREGRAD_HF_CACHE
+hf_cache_dir: "${COREGRAD_HF_CACHE}"
+
+# Working directory for packed binary shards, tokenizers, indexes, and runs
+# Env override: COREGRAD_WORK_DIR (defaults to ./data and ./runs in repo root)
+data_dir: "data"
+runs_dir: "runs"

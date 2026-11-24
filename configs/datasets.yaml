@@ -1,0 +1,88 @@
+# Public dataset manifest for coregrad (100% open-licensed, English-first).
+# All datasets are referenced purely by public Hugging Face repo ID and revision.
+# Local storage locations are configured separately via COREGRAD_HF_CACHE or
+# gitignored configs/sources.local.yaml.
+
+pretrain:
+  edu-en:
+    repo: HuggingFaceFW/fineweb-edu
+    revision: 87f09149ef4734204d70ed1d046ddc9ca3f2b8f9
+    license: odc-by
+    weight: 0.45
+    format: parquet
+    text_column: text
+    glob: "sample/10BT/*.parquet"
+
+  cosmo:
+    repo: HuggingFaceTB/cosmopedia
+    revision: 0ae6ec63f91742bd2d1eaef4f02232c55d719385
+    license: apache-2.0
+    weight: 0.25
+    format: parquet
+    text_column: text
+    glob: "data/**/*.parquet"
+
+  code-starcoder:
+    repo: bigcode/starcoderdata
+    revision: 9fc30b578cedaec69e47302df72cf00feed7c8c4
+    license: permissive-per-file
+    weight: 0.12
+    format: parquet
+    text_column: content
+    glob: "*/*.parquet"
+
+  code-github-clean:
+    repo: codeparrot/github-code-clean
+    revision: c48d40f9e70f0196f8236901ee35807f7d6c44c0
+    license: permissive-per-file
+    weight: 0.05
+    format: parquet
+    text_column: code
+    glob: "data/*.parquet"
+
+  finemath:
+    repo: HuggingFaceTB/finemath
+    revision: e92b25a61673
+    license: odc-by
+    weight: 0.13
+    format: parquet
+    text_column: text
+    glob: "**/*.parquet"
+
+tools_and_sft:
+  tool-hermes:
+    repo: NousResearch/hermes-function-calling-v1
+    revision: dae3e1d28cfbcf4b915c04ea1e072030529b4bda
+    license: apache-2.0
+    format: json
+    glob: "*.json"
+
+  tool-xlam:
+    repo: Salesforce/xlam-function-calling-60k
+    revision: 26d14ebfe18b1f7b524bd39b404b50af5dc97866
+    license: CC-BY-4.0
+    format: json
+    glob: "*.json"
+
+  tool-glaive:
+    repo: glaiveai/glaive-function-calling-v2
+    revision: e7f4b6456019
+    license: apache-2.0
+    format: json
+    glob: "*.json"
+
+  sft-smoltalk:
+    repo: HuggingFaceTB/smol-smoltalk
+    license: apache-2.0
+    format: parquet
+    glob: "data/*.parquet"
+
+reference_models:
+  embedder:
+    repo: google/embeddinggemma-2
+    license: apache-2.0
+    modality: text-only
+    mrl_dim: 256
+  eval_baseline:
+    repo: HuggingFaceTB/SmolLM2-360M
+    license: apache-2.0

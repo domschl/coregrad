@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "coregrad"
+version = "0.1.0"
+description = "A compact, open-data cognitive core LLM trained from scratch on a single consumer GPU."
+readme = "plan/project_plan.md"
+requires-python = ">=3.13"
+dependencies = [
+    "torch>=2.10",
+    "numpy>=2.0",
+    "pyarrow>=18.0",
+    "pyyaml>=6.0",
+    "tokenizers>=0.20",
+    "huggingface-hub>=0.26",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+retrieval = [
+    "sentence-transformers>=3.3",
+    "transformers>=4.48",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/coregrad"]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu134", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu134"
+url = "https://download.pytorch.org/whl/cu134"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"

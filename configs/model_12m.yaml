@@ -1,0 +1,13 @@
+# coregrad-12m: fast smoke-test model (~12M params)
+name: coregrad-12m
+vocab_size: 16384
+max_seq_len: 2048
+n_layer: 6
+d_model: 320
+n_heads: 8
+n_kv_heads: 4
+d_ff: 896
+rope_theta: 10000.0
+norm_eps: 1.0e-6
+qk_norm: true
+tie_embeddings: true

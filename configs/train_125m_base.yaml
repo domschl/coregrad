@@ -1,0 +1,30 @@
+# Run 2: 125M Gate 1 reference base model (6.0B tokens, ~31 hours resumable on RTX 4070 Ti)
+run_name: coregrad_125m_base
+model_config: configs/model_125m.yaml
+optimizer: muon
+total_tokens: 6000000000
+seq_len: 2048
+micro_batch: 4
+grad_accum: 32
+peak_lr: 6.0e-4
+min_lr: 6.0e-5
+muon_lr: 0.02
+weight_decay: 0.1
+grad_clip: 1.0
+warmup_fraction: 0.02
+decay_fraction: 0.10
+decay_style: cosine
+compile_model: true
+activation_checkpointing: false
+seed: 1337
+log_interval: 20
+eval_interval: 500
+eval_val_batches: 16
+sample_count: 6
+sample_max_tokens: 128
+save_interval: 2000
+mixture:
+  edu-en: 0.45
+  cosmo: 0.25
+  code-starcoder: 0.17
+  finemath: 0.13
