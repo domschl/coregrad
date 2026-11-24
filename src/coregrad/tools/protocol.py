@@ -77,7 +77,7 @@ class Turn:
 TRAINABLE_ROLES = frozenset({"think", "call", "assistant"})
 
 
-def format_tool_call(name: str, **kwargs: Any) -> str:
+def format_tool_call(tool_name: str, /, **kwargs: Any) -> str:
     """Format a canonical single-line tool call like search(query="...", k=3)."""
     parts: list[str] = []
     for k, v in kwargs.items():
@@ -85,7 +85,7 @@ def format_tool_call(name: str, **kwargs: Any) -> str:
             parts.append(f"{k}={json.dumps(v, ensure_ascii=False)}")
         else:
             parts.append(f"{k}={v!r}")
-    return f"{name}({', '.join(parts)})"
+    return f"{tool_name}({', '.join(parts)})"
 
 
 def parse_tool_call(raw: str) -> ToolCall:

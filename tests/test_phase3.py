@@ -22,6 +22,7 @@ from coregrad.tools import (
     Turn,
     encode_masked_trajectory,
     extract_peak_excerpt,
+    format_tool_call,
     parse_tool_call,
     safe_calc,
     validate_tool_call,
@@ -60,6 +61,8 @@ def test_safe_calc_and_security_guards() -> None:
 
 
 def test_tool_protocol_parsing_and_masked_sft_labels(tmp_path: Path) -> None:
+    # Ensure tools having a keyword argument literally named 'name' format cleanly
+    assert format_tool_call("lookup", name="Ada", limit=5) == 'lookup(name="Ada", limit=5)'
     call = parse_tool_call('search(query="Darwin 1859", k=3)')
     ok, msg = validate_tool_call(call)
     assert ok, msg
