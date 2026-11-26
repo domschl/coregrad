@@ -243,6 +243,8 @@ def test_reward_scoring_and_cpu_sft_grpo_gate2_pipeline(tmp_path: Path) -> None:
             group_size=2,
             max_tool_turns=1,
             max_new_tokens_per_turn=12,
+            eval_interval=0,
+            use_squad_v2=False,
         ),
         tokenizer_path=tok_path,
         runs_dir=tmp_path / "runs",

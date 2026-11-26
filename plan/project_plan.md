@@ -255,10 +255,13 @@ Author X published Book Y in 1962 <|cite|>d412<|/cite|>, which was 17 years befo
 
 ---
 
-### Phase 5 (Optional Future Extension): Private Library Integration
-Once the open cognitive core works cleanly:
-1. **Zero-Training Personal Research (Default — Recommended):** Simply run `coregrad index <local-markdown-dir>` and `coregrad chat` against any private books/notes. Because the cognitive core externalizes knowledge by design, the public weights never absorb private text and remain freely shareable.
-2. **Optional Local Domain Adaptation (Opt-In):** Add a clean `optional_local_sources` hook in gitignored `configs/sources.local.yaml` allowing users to locally mix private Markdown books into pretraining or grounded-QA SFT (producing local-only private checkpoints kept strictly outside git).
+### Phase 5 (Optional Future Extensions): Symbolic Compute v3 & Private Library Integration
+Once the open 4-tool cognitive core and Phase 4 essentialization experiments are complete:
+1. **Cognitive Core v3 — SymPy + Sandboxed `py(code)` Extension (Post-Training Branch, Zero Base Retraining):**
+   - Extend `calc(expr)` with pure-Python **SymPy** symbolic operations (`solve`, `diff`, `integrate`, `simplify`, `factor`) and add a 5th primitive `py(code)` running in a pluggable sandbox (default: isolated `python -I` subprocess + AST import allowlist + `RLIMIT_CPU`/`RLIMIT_AS`; optional strict Linux `bwrap`/container tier; optional external Maxima CAS plugin).
+   - Generate deterministic SymPy algebra/calculus trajectories + Program-Aided LM (PAL) multi-step math trajectories and branch a ~45-min SFT v3 + Symbolic GRPO run (verifiable reward via `sympy.simplify(pred - gold) == 0`) directly from `coregrad_125m_base`.
+2. **Zero-Training Personal Research (Default — Recommended):** Simply run `coregrad index <local-markdown-dir> --use-embeddinggemma2` and `coregrad chat` against any private books/notes. Because the cognitive core externalizes knowledge by design, the public weights never absorb private text and remain freely shareable.
+3. **Optional Local Domain Adaptation (Opt-In):** Add a clean `optional_local_sources` hook in gitignored `configs/sources.local.yaml` allowing users to locally mix private Markdown books into pretraining or grounded-QA SFT (producing local-only private checkpoints kept strictly outside git).
 
 ---
 
