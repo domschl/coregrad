@@ -1,0 +1,14 @@
+# Phase 4A: coregrad-25m-dense (iso-parameter dense baseline, ~25.2M params, 12 effective layers)
+name: coregrad-25m-dense
+vocab_size: 16384
+max_seq_len: 2048
+n_layer: 12
+d_model: 384
+n_heads: 6
+n_kv_heads: 2
+d_ff: 1024
+rope_theta: 10000.0
+norm_eps: 1.0e-6
+qk_norm: true
+tie_embeddings: true
+n_loops: 1

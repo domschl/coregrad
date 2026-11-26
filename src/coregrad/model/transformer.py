@@ -39,6 +39,10 @@ class ModelConfig:
     qk_norm: bool = True
     tie_embeddings: bool = True
     activation_checkpointing: bool = False
+    n_loops: int = 1
+    loop_start: int = 0
+    loop_end: int | None = None
+    loop_step_embed: bool = False
 
     def __post_init__(self) -> None:
         if self.d_model % self.n_heads != 0:
@@ -47,6 +51,23 @@ class ModelConfig:
             raise ValueError(
                 f"n_heads ({self.n_heads}) must be divisible by n_kv_heads ({self.n_kv_heads})"
             )
+        if self.n_loops < 1:
+            raise ValueError(f"n_loops must be >= 1, got {self.n_loops}")
+        end = self.n_layer if self.loop_end is None else self.loop_end
+        if not (0 <= self.loop_start < end <= self.n_layer):
+            raise ValueError(
+                f"Invalid loop slice [{self.loop_start}:{end}] for n_layer={self.n_layer}"
+            )
+
+    @property
+    def resolved_loop_end(self) -> int:
+        return self.n_layer if self.loop_end is None else self.loop_end
+
+    @property
+    def effective_layers(self) -> int:
+        end = self.resolved_loop_end
+        core = end - self.loop_start
+        return self.loop_start + self.n_loops * core + (self.n_layer - end)
 
     @property
     def head_dim(self) -> int:
@@ -162,6 +183,11 @@ class CoreGradLM(nn.Module):
         self.blocks = nn.ModuleList([TransformerBlock(cfg) for _ in range(cfg.n_layer)])
         self.final_norm = RMSNorm(cfg.d_model, eps=cfg.norm_eps)
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
+        self.loop_emb: nn.Parameter | None = (
+            nn.Parameter(torch.zeros(cfg.n_loops, cfg.d_model))
+            if (cfg.n_loops > 1 and cfg.loop_step_embed)
+            else None
+        )
 
         if cfg.tie_embeddings:
             self.lm_head.weight = self.tok_emb.weight
@@ -171,8 +197,8 @@ class CoreGradLM(nn.Module):
         self.register_buffer("rope_sin", sin, persistent=False)
 
         self.apply(self._init_weights)
-        # Scale residual output projections for stable deep initialization
-        residual_std = 0.02 / math.sqrt(2.0 * cfg.n_layer)
+        # Scale residual output projections by effective execution depth
+        residual_std = 0.02 / math.sqrt(2.0 * cfg.effective_layers)
         for block in self.blocks:
             nn.init.normal_(block.attn.o_proj.weight, mean=0.0, std=residual_std)
             nn.init.normal_(block.mlp.w_down.weight, mean=0.0, std=residual_std)
@@ -194,6 +220,32 @@ class CoreGradLM(nn.Module):
             total -= self.tok_emb.weight.numel()
         return total
 
+    def iter_execution_steps(self) -> list[tuple[int | None, TransformerBlock]]:
+        """Return ordered (loop_emb_idx_or_none, block) steps matching forward() execution.
+
+        loop_emb_idx is non-None only on the first block of each recurrent iteration when
+        loop_step_embed is active.
+        """
+        if self.cfg.n_loops == 1:
+            return [(None, block) for block in self.blocks]
+        start = self.cfg.loop_start
+        end = self.cfg.resolved_loop_end
+        steps: list[tuple[int | None, TransformerBlock]] = [(None, self.blocks[i]) for i in range(start)]
+        for loop_idx in range(self.cfg.n_loops):
+            for offset, i in enumerate(range(start, end)):
+                emb_idx = loop_idx if (offset == 0 and self.loop_emb is not None) else None
+                steps.append((emb_idx, self.blocks[i]))
+        for i in range(end, self.cfg.n_layer):
+            steps.append((None, self.blocks[i]))
+        return steps
+
+    def _run_block(
+        self, block: TransformerBlock, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+    ) -> torch.Tensor:
+        if self.cfg.activation_checkpointing and self.training:
+            return checkpoint(block, x, cos, sin, use_reentrant=False)
+        return block(x, cos, sin)
+
     def forward(
         self, idx: torch.Tensor, targets: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
@@ -205,11 +257,21 @@ class CoreGradLM(nn.Module):
         cos = self.rope_cos[:, :, :seq_len, :]
         sin = self.rope_sin[:, :, :seq_len, :]
 
-        for block in self.blocks:
-            if self.cfg.activation_checkpointing and self.training:
-                x = checkpoint(block, x, cos, sin, use_reentrant=False)
-            else:
-                x = block(x, cos, sin)
+        if self.cfg.n_loops == 1:
+            for block in self.blocks:
+                x = self._run_block(block, x, cos, sin)
+        else:
+            start = self.cfg.loop_start
+            end = self.cfg.resolved_loop_end
+            for i in range(start):
+                x = self._run_block(self.blocks[i], x, cos, sin)
+            for loop_idx in range(self.cfg.n_loops):
+                if self.loop_emb is not None:
+                    x = x + self.loop_emb[loop_idx]
+                for i in range(start, end):
+                    x = self._run_block(self.blocks[i], x, cos, sin)
+            for i in range(end, self.cfg.n_layer):
+                x = self._run_block(self.blocks[i], x, cos, sin)
 
         x = self.final_norm(x)
         logits = self.lm_head(x)

@@ -34,6 +34,18 @@ def main() -> int:
     p_chat.add_argument("--mrl-dim", type=int, default=256)
     p_chat.add_argument("--temperature", type=float, default=0.0)
     p_chat.add_argument("--ask", type=str, default=None, help="Run a single non-interactive query and exit")
+    p_chat.add_argument(
+        "--kv-cache",
+        action="store_true",
+        help="Opt-in Phase 4B GQA KV-bank injection mode (for additional latent-memory tests)",
+    )
+    p_chat.add_argument(
+        "--query-head",
+        type=Path,
+        default=None,
+        help="Optional trained LatentQueryHead checkpoint for zero-token latent retrieval with --kv-cache",
+    )
+    p_chat.add_argument("--kv-top-k", type=int, default=4, help="Passages injected into GQA KV bank")
 
     args = parser.parse_args()
     paths = load_local_paths()
@@ -66,6 +78,9 @@ def main() -> int:
             use_embeddinggemma2=args.use_embeddinggemma2,
             mrl_dim=args.mrl_dim,
             temperature=args.temperature,
+            use_kv_cache=args.kv_cache,
+            query_head_path=args.query_head,
+            kv_top_k=args.kv_top_k,
         )
         return 0
 
@@ -76,6 +91,9 @@ def main() -> int:
         use_embeddinggemma2=args.use_embeddinggemma2,
         mrl_dim=args.mrl_dim,
         temperature=args.temperature,
+        use_kv_cache=args.kv_cache,
+        query_head_path=args.query_head,
+        kv_top_k=args.kv_top_k,
     )
     return 0
 

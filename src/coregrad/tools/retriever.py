@@ -417,12 +417,53 @@ class HybridMarkdownIndex:
         if self.embedder is None or self._vectors is None or len(self._vectors) == 0:
             return []
         q_vec = self.embedder.encode_queries([query])[0]
-        scores = self._vectors @ q_vec
+        return self._dense_ranks_from_vector(q_vec, limit=limit)
+
+    def _dense_ranks_from_vector(self, q_vec: np.ndarray, limit: int = 20) -> list[int]:
+        if self._vectors is None or len(self._vectors) == 0:
+            return []
+        vec = np.asarray(q_vec, dtype=np.float32)
+        if vec.shape[-1] != self._vectors.shape[-1]:
+            return []
+        scores = self._vectors @ vec
         top_n = min(limit, len(scores))
         top_idx = np.argpartition(scores, -top_n)[-top_n:]
         top_idx = top_idx[np.argsort(scores[top_idx])[::-1]]
         # SQLite autoincrement chunk_id starts at 1 after fresh build
         return [int(i) + 1 for i in top_idx]
+
+    def search_by_vector(self, q_vec: np.ndarray, k: int = 3) -> list[SearchHit]:
+        """Retrieve top-k chunks directly from a pre-normalized latent query vector."""
+        if self._vectors is None or len(self._vectors) == 0:
+            return []
+        vec = np.asarray(q_vec, dtype=np.float32)
+        if vec.shape[-1] != self._vectors.shape[-1]:
+            raise ValueError(
+                f"Query vector dim ({vec.shape[-1]}) does not match index vector dim ({self._vectors.shape[-1]})."
+            )
+        scores = self._vectors @ vec
+        top_n = max(1, min(k, len(scores)))
+        top_idx = np.argpartition(scores, -top_n)[-top_n:]
+        top_idx = top_idx[np.argsort(scores[top_idx])[::-1]]
+        hits: list[SearchHit] = []
+        for idx in top_idx:
+            cid = int(idx) + 1
+            row = self._conn.execute(
+                "SELECT doc_id, title, start_char, end_char, text FROM chunks WHERE chunk_id = ?",
+                (cid,),
+            ).fetchone()
+            if row is not None:
+                hits.append(
+                    SearchHit(
+                        doc_id=row[0],
+                        title=row[1],
+                        start=int(row[2]),
+                        end=int(row[3]),
+                        score=float(scores[idx]),
+                        text=row[4],
+                    )
+                )
+        return hits
 
     def search(self, query: str, k: int = 3, rrf_k: int = 60) -> list[SearchHit]:
         pool = max(20, k * 5)

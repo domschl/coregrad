@@ -1,0 +1,30 @@
+# Phase 4A: 25M looped-12 (6x2 = 12 eff layers, 1.5B tokens, exact iso-FLOP to 45M & iso-param to 25M dense)
+run_name: coregrad_25m_looped12_base
+model_config: configs/model_25m_looped12.yaml
+optimizer: muon
+total_tokens: 1500000000
+seq_len: 2048
+micro_batch: 8
+grad_accum: 8
+peak_lr: 8.0e-4
+min_lr: 8.0e-5
+muon_lr: 0.02
+weight_decay: 0.1
+grad_clip: 1.0
+warmup_fraction: 0.02
+decay_fraction: 0.12
+decay_style: cosine
+compile_model: true
+activation_checkpointing: false
+seed: 1337
+log_interval: 20
+eval_interval: 500
+eval_val_batches: 16
+sample_count: 6
+sample_max_tokens: 112
+save_interval: 2500
+mixture:
+  edu-en: 0.45
+  cosmo: 0.25
+  code-starcoder: 0.17
+  finemath: 0.13

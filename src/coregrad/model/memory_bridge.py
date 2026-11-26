@@ -304,7 +304,9 @@ def encode_kv_passage(
     kv_list: list[tuple[torch.Tensor, torch.Tensor]] = []
     start = 1 if (drop_bos and seq_len > 1) else 0
 
-    for block in model.blocks:
+    for emb_idx, block in model.iter_execution_steps():
+        if emb_idx is not None and model.loop_emb is not None:
+            x = x + model.loop_emb[emb_idx]
         attn = block.attn
         xn = block.attn_norm(x)
         q = attn.q_proj(xn).view(bsz, seq_len, attn.n_heads, attn.head_dim).transpose(1, 2)
@@ -354,7 +356,9 @@ def forward_with_kv_bank(
     mem_allow = torch.ones((q_len, mem_len), dtype=torch.bool, device=query_ids.device)
     attn_mask = torch.cat([mem_allow, q_causal], dim=1)[None, None, :, :]
 
-    for block, (k_mem_raw, v_mem) in zip(model.blocks, kv_bank, strict=True):
+    for (emb_idx, block), (k_mem_raw, v_mem) in zip(model.iter_execution_steps(), kv_bank, strict=True):
+        if emb_idx is not None and model.loop_emb is not None:
+            x = x + model.loop_emb[emb_idx]
         attn = block.attn
         xn = block.attn_norm(x)
         q = attn.q_proj(xn).view(bsz, q_len, attn.n_heads, attn.head_dim).transpose(1, 2)
