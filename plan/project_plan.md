@@ -204,7 +204,7 @@ Author X published Book Y in 1962 <|cite|>d412<|/cite|>, which was 17 years befo
 - [x] **Routing & Abstention:** ≥ 85% accuracy deciding when to call a tool vs. answer directly vs. abstain when evidence is absent (**100.0% (30/30)** Gate 2 abstention; **2/2** clean OOD no-tool chat routing after SFT v2 system-prompt alignment; 16% on adversarial SQuAD v2 traps — target for GRPO).
 - [x] **Offloaded Reasoning:** ≥ 75% exact accuracy on held-out 1-to-3-step `calc` reasoning problems (**100.0% (100/100)** on locked Gate 2 calc suite; vs. 0% with tools disabled).
 - [x] **Grounded Retrieval:** ≥ 70% factually accurate, properly cited answers on held-out 1-hop & 2-hop synthetic retrieval tasks (**94.4% (85/90)** accuracy, **96.7%** citation rate, **0** hallucinated citations vs. 0% without tools; plus **80.0%** target-doc citation / **28.0%** exact span match on 100 unseen SQuAD v2 Wikipedia tasks).
-- [ ] **End-to-End CLI Demo:** Interactive local research session answering multi-passage questions with verified citations (CLI & hybrid `EmbeddingGemma 2` + FTS5 BM25 indexer implemented; ready for live demo & GRPO polish).
+- [x] **End-to-End CLI Demo:** Verified live co-resident `coregrad-125m` + `google/embeddinggemma-2` (256d MRL) + SQLite FTS5 BM25 (RRF) over a 35-article / 250-chunk public Markdown library (`scripts/build_public_demo_library.py` + `scripts/research_cli.py`): **8/8 (100%) grounded citations**, **0** hallucinated citations, **2.21 GB** total co-resident VRAM; full user guide published in `docs/LOCAL_RESEARCH_GUIDE.md`.
 
 ---
 

@@ -98,18 +98,25 @@ def test_hybrid_markdown_index_bm25_and_rrf(tmp_path: Path) -> None:
     md_dir = tmp_path / "books"
     md_dir.mkdir()
     (md_dir / "optics.md").write_text(
-        "# Optics Notes\n\nLight travels at 299792458 m/s in vacuum. Prisms disperse white light.\n",
+        "# Optics Notes\n\nIn a vacuum, the speed of light is 299792458 m/s, and glass prisms disperse white light into its constituent spectrum of colors.\n",
         encoding="utf-8",
     )
     (md_dir / "botany.md").write_text(
-        "# Alpine Botany\n\nHigh-altitude mosses survive freezing winters through desiccation.\n",
+        "# Alpine Botany\n\nHigh-altitude mosses survive the freezing winter months through desiccation and cellular protection mechanisms that have evolved over millennia.\n",
+        encoding="utf-8",
+    )
+    (md_dir / "deutsch.md").write_text(
+        "# Alpenbotanik\n\nDie hochalpinen Moose überleben kalte Winter durch Austrocknung und besondere Schutzmechanismen in den hohen Bergen Europas und der Schweiz.\n",
         encoding="utf-8",
     )
 
     idx = HybridMarkdownIndex(tmp_path / "index", embedder=_MockEmbedder())
     try:
-        stats = idx.index_markdown_directory(md_dir)
+        # Rebuild twice on the same directory to verify FTS5 & chunk_id stay cleanly aligned
+        idx.index_markdown_directory(md_dir, english_only=True)
+        stats = idx.index_markdown_directory(md_dir, english_only=True)
         assert stats["docs"] == 2
+        assert stats["skipped_non_english"] == 1
         assert stats["has_vectors"] == 1
         hits = idx.search("speed of light vacuum prism", k=2)
         assert len(hits) >= 1

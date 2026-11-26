@@ -250,6 +250,25 @@ class InMemoryBM25Retriever:
         return out
 
 
+_ENGLISH_MARKERS = frozenset(
+    {
+        "the", "and", "of", "to", "is", "that", "for", "with", "are", "this",
+        "from", "by", "not", "which", "have", "were", "they", "their", "been",
+        "has", "would", "will", "can", "about", "into", "more", "other", "than",
+        "its", "also", "these", "those", "between", "through", "during", "however",
+    }
+)
+
+
+def is_likely_english(text: str, min_marker_ratio: float = 0.06) -> bool:
+    """Fast, zero-dependency heuristic to filter non-English full texts for English-only cores."""
+    toks = _tokenize_bm25(text[:4000], drop_stopwords=False)
+    if len(toks) < 12:
+        return True
+    eng_hits = sum(1 for t in toks if t in _ENGLISH_MARKERS)
+    return (eng_hits / len(toks)) >= min_marker_ratio
+
+
 class HybridMarkdownIndex:
     """Persistent SQLite FTS5 BM25 + optional EmbeddingGemma 2 dense vector index fused via RRF."""
 
@@ -300,10 +319,18 @@ class HybridMarkdownIndex:
         overlap_chars: int = 150,
         embed_batch_size: int = 64,
     ) -> dict[str, int]:
+        # Drop and recreate tables so FTS5 external-content index and AUTOINCREMENT chunk_ids
+        # always start cleanly at 1 with zero stale rows across re-indexes.
+        self._conn.executescript(
+            """
+            DROP TABLE IF EXISTS chunks_fts;
+            DROP TABLE IF EXISTS chunks;
+            DROP TABLE IF EXISTS docs;
+            DELETE FROM sqlite_sequence WHERE name='chunks';
+            """
+        )
+        self._init_schema()
         cur = self._conn.cursor()
-        cur.execute("DELETE FROM docs")
-        cur.execute("DELETE FROM chunks")
-        cur.execute("DELETE FROM chunks_fts")
 
         chunk_texts: list[str] = []
         for doc in docs:
@@ -339,30 +366,41 @@ class HybridMarkdownIndex:
 
     def index_markdown_directory(
         self,
-        root_dir: Path,
+        root_dir: Path | list[Path],
         chunk_chars: int = 1000,
         overlap_chars: int = 150,
+        english_only: bool = False,
     ) -> dict[str, int]:
-        files = sorted(p for p in root_dir.rglob("*.md") if p.is_file())
+        roots = [root_dir] if isinstance(root_dir, Path) else list(root_dir)
         docs: list[Document] = []
-        for idx, path in enumerate(files, start=1):
-            text = path.read_text(encoding="utf-8", errors="ignore").strip()
-            if not text:
-                continue
-            title = path.stem.replace("_", " ").replace("-", " ")
-            for line in text.splitlines()[:5]:
-                if line.startswith("# "):
-                    title = line[2:].strip()
-                    break
-            docs.append(
-                Document(
-                    doc_id=f"d{idx:04d}",
-                    title=title,
-                    text=text,
-                    source=str(path.relative_to(root_dir)),
+        skipped_non_english = 0
+        idx = 0
+        for rdir in roots:
+            files = sorted(p for p in rdir.rglob("*.md") if p.is_file())
+            for path in files:
+                text = path.read_text(encoding="utf-8", errors="ignore").strip()
+                if not text:
+                    continue
+                if english_only and not is_likely_english(text):
+                    skipped_non_english += 1
+                    continue
+                idx += 1
+                title = path.stem.replace("_", " ").replace("-", " ")
+                for line in text.splitlines()[:5]:
+                    if line.startswith("# "):
+                        title = line[2:].strip()
+                        break
+                docs.append(
+                    Document(
+                        doc_id=f"d{idx:04d}",
+                        title=title,
+                        text=text,
+                        source=f"{rdir.name}/{path.relative_to(rdir)}",
+                    )
                 )
-            )
-        return self.build_from_documents(docs, chunk_chars=chunk_chars, overlap_chars=overlap_chars)
+        stats = self.build_from_documents(docs, chunk_chars=chunk_chars, overlap_chars=overlap_chars)
+        stats["skipped_non_english"] = skipped_non_english
+        return stats
 
     def _bm25_ranks(self, query: str, limit: int = 20) -> list[int]:
         terms = _tokenize_bm25(query, drop_stopwords=True)

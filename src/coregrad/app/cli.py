@@ -13,20 +13,66 @@ from coregrad.tools.rollout import run_agent_rollout
 
 
 def build_markdown_index(
-    markdown_dir: Path,
+    markdown_dirs: Path | list[Path],
     index_dir: Path,
     *,
     use_embeddinggemma2: bool = False,
     mrl_dim: int = 256,
     chunk_chars: int = 1000,
+    english_only: bool = False,
 ) -> dict[str, int]:
     embedder = EmbeddingGemma2Embedder(mrl_dim=mrl_dim) if use_embeddinggemma2 else None
     index = HybridMarkdownIndex(index_dir, embedder=embedder)
     try:
-        stats = index.index_markdown_directory(markdown_dir, chunk_chars=chunk_chars)
+        stats = index.index_markdown_directory(
+            markdown_dirs, chunk_chars=chunk_chars, english_only=english_only
+        )
     finally:
         index.close()
     return stats
+
+
+def run_single_query(
+    checkpoint_path: Path,
+    tokenizer_path: Path,
+    question: str,
+    index_dir: Path | None = None,
+    *,
+    use_embeddinggemma2: bool = False,
+    mrl_dim: int = 256,
+    temperature: float = 0.0,
+) -> None:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    tokenizer = CoreGradTokenizer.from_file(tokenizer_path)
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    model = CoreGradLM(ModelConfig(**ckpt["model_config"])).to(device)
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.eval()
+
+    index: HybridMarkdownIndex | None = None
+    if index_dir is not None and index_dir.exists():
+        embedder = EmbeddingGemma2Embedder(mrl_dim=mrl_dim) if use_embeddinggemma2 else None
+        index = HybridMarkdownIndex(index_dir, embedder=embedder)
+
+    try:
+        trace = run_agent_rollout(
+            model,
+            tokenizer,
+            question,
+            ToolExecutor(index),
+            device,
+            max_tool_turns=4,
+            temperature=temperature,
+        )
+        print(f"Question : {question}")
+        if trace.tool_calls_raw:
+            print(f"Tools    : {trace.tool_calls_raw}")
+        print(f"Answer   : {trace.final_answer}")
+        if trace.cited_doc_ids:
+            print(f"Citations: {', '.join(sorted(set(trace.cited_doc_ids)))}")
+    finally:
+        if index is not None:
+            index.close()
 
 
 def run_interactive_chat(

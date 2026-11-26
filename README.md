@@ -6,6 +6,7 @@ A compact, open-data **cognitive core** LLM built and trained from scratch in cl
 
 ## Documentation & Study Template
 - **[Study Guide](docs/STUDY_GUIDE.md):** Chapter-by-chapter walkthrough of every technique, ablation table, and further-study pointers mapped directly to `src/coregrad/`.
+- **[Local Research Guide](docs/LOCAL_RESEARCH_GUIDE.md):** How to index and query your own Markdown libraries (hybrid `EmbeddingGemma 2` + BM25, multilingual filtering, external vector DB adapters).
 - **[Datasets & Licenses](docs/DATASETS.md):** Exact Hugging Face repos, pinned revisions, licenses, mixture weights, and token/dedup counts (100% open data).
 - **[Prior Research & References](docs/REFERENCES.md):** Full bibliography linking papers directly to code modules.
 - **[Project Plan](plan/project_plan.md):** Phased roadmap, hardware budget, and Go/No-Go gates.

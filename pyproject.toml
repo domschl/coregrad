@@ -26,6 +26,8 @@ dev = [
 retrieval = [
     "sentence-transformers>=3.3",
     "transformers>=4.48",
+    "pillow>=11.0",
+    "torchvision>=0.20",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -33,6 +35,9 @@ packages = ["src/coregrad"]
 
 [tool.uv.sources]
 torch = [
+    { index = "pytorch-cu134", marker = "sys_platform == 'linux'" },
+]
+torchvision = [
     { index = "pytorch-cu134", marker = "sys_platform == 'linux'" },
 ]
 
