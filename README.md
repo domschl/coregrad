@@ -4,7 +4,11 @@ A compact, open-data **cognitive core** LLM built and trained from scratch in cl
 
 `coregrad` combines the minimal, readable engineering ethos of `micrograd` / `nanoGPT` with the cognitive-core thesis: dedicate a tiny model's parameter budget to **language, reasoning, and tool orchestration**, while outsourcing **world and personal knowledge** to external local retrieval (hybrid `google/embeddinggemma-2` + SQLite FTS5 BM25).
 
-See [plan/project_plan.md](plan/project_plan.md) for the full phased roadmap and Go/No-Go gates.
+## Documentation & Study Template
+- **[Study Guide](docs/STUDY_GUIDE.md):** Chapter-by-chapter walkthrough of every technique, ablation table, and further-study pointers mapped directly to `src/coregrad/`.
+- **[Datasets & Licenses](docs/DATASETS.md):** Exact Hugging Face repos, pinned revisions, licenses, mixture weights, and token/dedup counts (100% open data).
+- **[Prior Research & References](docs/REFERENCES.md):** Full bibliography linking papers directly to code modules.
+- **[Project Plan](plan/project_plan.md):** Phased roadmap, hardware budget, and Go/No-Go gates.
 
 ## Quickstart
 

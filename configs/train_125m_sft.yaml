@@ -1,12 +1,13 @@
-# Stage 2B: Masked SFT on synthetic calc/retrieval + public tool/chat trajectories
-# Includes optional RoPE theta scaling (2048 -> 4096) with activation checkpointing.
+# Stage 2B: Packed Masked SFT on synthetic calc/retrieval + public tool/chat trajectories
+# ~159M packed tokens (2 epochs over 153k trajectories) -> ~50 min on RTX 4070 Ti
 run_name: coregrad_125m_sft
 init_from: runs/coregrad_125m_base/best.pt
 train_jsonl: data/phase3/sft/train.jsonl
 val_jsonl: data/phase3/sft/val.jsonl
+eval_tasks_json: data/phase3/eval_tasks.json
 optimizer: adamw
 seq_len: 2048
-rope_theta_override: 100000.0
+pack_sequences: true
 micro_batch: 4
 grad_accum: 8
 epochs: 2
@@ -16,7 +17,8 @@ weight_decay: 0.05
 grad_clip: 1.0
 warmup_fraction: 0.05
 compile_model: true
-activation_checkpointing: true
+activation_checkpointing: false
 seed: 1337
 log_interval: 10
 eval_interval: 200
+rollout_probe_count: 4

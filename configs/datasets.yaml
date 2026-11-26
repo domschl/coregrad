@@ -42,7 +42,7 @@ pretrain:
 
   finemath:
     repo: HuggingFaceTB/finemath
-    revision: e92b25a61673
+    revision: e92b25a616738fe95dc186b64dfb19f9c8525594
     license: odc-by
     weight: 0.13
     format: parquet
@@ -66,13 +66,14 @@ tools_and_sft:
 
   tool-glaive:
     repo: glaiveai/glaive-function-calling-v2
-    revision: e7f4b6456019
+    revision: e7f4b6456019f5d8bcb991ef0dd67d8ff23221ac
     license: apache-2.0
     format: json
     glob: "*.json"
 
   sft-smoltalk:
     repo: HuggingFaceTB/smol-smoltalk
+    revision: f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc
     license: apache-2.0
     format: parquet
     glob: "data/*.parquet"
