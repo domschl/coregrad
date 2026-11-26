@@ -1,4 +1,5 @@
 from coregrad.synthetic.calc_gen import VerifiableCalcTask, generate_calc_tasks
+from coregrad.synthetic.logic_gen import VerifiableLogicTask, generate_logic_tasks
 from coregrad.synthetic.public_tools import (
     convert_gsm8k_row,
     iter_glaive_trajectories,
@@ -13,9 +14,11 @@ from coregrad.synthetic.retrieval_gen import VerifiableRetrievalTask, generate_r
 
 __all__ = [
     "VerifiableCalcTask",
+    "VerifiableLogicTask",
     "VerifiableRetrievalTask",
     "convert_gsm8k_row",
     "generate_calc_tasks",
+    "generate_logic_tasks",
     "generate_retrieval_tasks",
     "iter_glaive_trajectories",
     "iter_gsm8k_trajectories",
