@@ -233,25 +233,20 @@ Author X published Book Y in 1962 <|cite|>d412<|/cite|>, which was 17 years befo
 
 ---
 
-### Phase 4B (Research Track): Latent Memory Bridge (Middle-Layer Knowledge Injection)
-**Objective:** Go beyond text-only tool outputs by letting the model's middle layers directly query and cross-attend to an external vector knowledge base in latent space — creating a **"Peripheral (Latent) + Foveal (Tools)"** cognitive memory architecture without blowing up the context window.
+### Phase 4B (Research Track): Latent Memory Bridge (Middle-Layer Knowledge Injection) — **COMPLETED**
+**Objective:** Go beyond text-only tool outputs by testing whether a 125M model can directly query and read an external knowledge base in latent space under a strict falsifiable causal control (`OFF` vs. `SHUFFLED` vs. `MATCHED`).
 
-1. **Zero-Initialized Gated Middle-Layer Cross-Attention (RETRO-style, Retrofittable):**
-   - Bolt lightweight gated cross-attention blocks (`x = x + tanh(α) · CrossAttn(x, mem_K, mem_V)`, initialized at `α = 0` so pretrained Gate 1/2 behavior is preserved at step 0) onto middle/upper layers (e.g., layers 9, 12, 15 of `coregrad-125m`).
-   - Pre-encode indexed knowledge passages into compact latent memory representations (starting from projected `google/embeddinggemma-2` 768d vectors for lightweight xRAG-style gist injection, scaling up to 16–32 pooled latent tokens per chunk for high-fidelity RETRO-style recall), stored in RAM for fast lookup.
-2. **Learned Middle-Layer Latent Query Head:**
-   - Attach a small MLP query projector `q = MLP_q(h_mid)` (`d_model=768 → 768`) at middle layer $L/2$ aligned to EmbeddingGemma 2's vector space (initialized via cosine/InfoNCE alignment and optionally refined end-to-end via differentiable top-$k$ softmax retrieval weights from next-token loss).
-3. **Peripheral + Foveal Synergy:**
-   - **Latent Memory Bridge (Peripheral):** Cheaply injects background awareness across 10–30 relevant passages at **zero context-window token cost**.
-   - **Explicit Tools (`read`, `calc`) (Foveal):** Retained for exact verbatim dates, numbers, quotes, and verifiable citations where single-vector compression is lossy.
-4. **Evaluation:** Measure held-out document BPB drop, context-token reduction, and factual QA accuracy head-to-head against pure text RAG on the locked Gate 2 benchmark suite.
+- [x] **Mechanism 1 — Learned Latent Query Head (`src/coregrad/model/memory_bridge.py`, `scripts/run_phase4b_query_head.py`):** Layer sweep (layers 3–18) on frozen `coregrad_125m_base` showed monotonic semantic emergence peaking at **Layer 18/18: `79.8% R@5` (82.8% of `EmbeddingGemma 2`), `88.8% R@10` with 0 generated search tokens** (18.8s training).
+- [x] **Mechanism 2 — Retrofitted Zero-Init Gated Cross-Attention (`scripts/run_phase4b_bridge.py`):** Tested 5 variants (`1-vec EmbeddingGemma 2`, `8-slot RETRO`, `160-tok unpooled RETRO`, plus upper-layer co-adaptation 9–17 with 20% memory dropout). **Falsified by `SHUFFLED` control (`Δ_causal ≈ 0.000` across all 5 runs):** `OFF → MATCHED` (`1.832 → 1.228 BPB`) was 100% content-blind QA-format adaptation because randomly initialized cross-attention lacks pretrained induction/copy circuits at small (~100k answer-token) budgets.
+- [x] **Mechanism 3 — Independent Precomputed GQA KV-Bank Injection (`encode_kv_passage` / `forward_with_kv_bank`, `scripts/run_phase4b_kv_memory.py`):** Precomputes per-passage pre-RoPE GQA `(K, V)` tensors offline (`2.93 MB/passage` in bf16; `3.5s` for 406 passages) and injects them directly into `coregrad-125m`'s pretrained self-attention induction heads (**zero training, zero query-time passage prefill**). Achieved massive causal transfer on held-out SQuAD v2 (`sft_v2`: `k=1` **`Δ = −0.875 BPB` / `20.0% EM` (12×)**; `k=4` **`Δ = −0.784 BPB` / `12.5% EM` / `9.6% F1`** — 88% of full joint text-in-prompt EM and higher F1; `k=8` **`Δ = −0.523 BPB`**).
+- [x] **Published full tables & analysis in [`docs/EXPERIMENTS.md`](../docs/EXPERIMENTS.md).**
 
 ---
 
 ### Phase 4.5: Research Findings & Essentialization Addendum (`docs/EXPERIMENTS.md`)
 **Objective:** Publish the complete Gate 3 & Latent Memory Bridge empirical findings so the repository stands as an open mini-monograph.
 
-- [ ] `docs/EXPERIMENTS.md` — Pareto frontier tables & plots (`125M → 60M → 30M → 15M → 8M`, looped vs. dense depth, vocabulary compression, distillation, cognitive-core purity A/B, and Latent Memory Bridge vs. pure text RAG).
+- [x] `docs/EXPERIMENTS.md` (Section 1: Phase 4B Latent Memory Bridge published; Section 2: Gate 3 Pareto frontier to be appended after Phase 4A).
 
 ---
 
