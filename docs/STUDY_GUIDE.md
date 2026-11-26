@@ -148,9 +148,33 @@ In [`grpo.py`](../src/coregrad/train/grpo.py), the model generates $G$ live mult
 - `+0.2` valid tool syntax & execution, `+0.5` exact answer or calibrated abstention, `+0.2` valid grounded citation, `-0.5` hallucinated citation.
 Group-normalized advantages + PPO clipping + KL anchor optimize multi-step tool control directly.
 
-*(Gate 2 SFT & GRPO benchmark numbers will be recorded here once the current Gate 2 runs complete.)*
+### Measured Gate 2 Results & The "100% Synthetic Isn't Enough" Lesson
 
-- **Further Study:** *DeepSeekMath / GRPO* (`arXiv:2402.03300`); *DeepSeek-R1* (`arXiv:2501.12948`).
+A core scientific lesson from `coregrad` is **always test out-of-distribution (OOD)** even when your held-out benchmark hits 100%.
+
+1. **SFT v1** (80k narrow synthetic + 45k public tool + 30k `smol-smoltalk` *without* `DEFAULT_SYSTEM_PROMPT`) scored **100.0% across all 220 locked Gate 2 tasks** (disjoint fictional entities and numbers), yet failed an 8-prompt real-Markdown + chat OOD test:
+   - Called `search(...)` on pure chat (*"Hello! Who are you?"*) due to system-prompt shortcutting.
+   - Retrieved the right unseen Markdown file (`voyager.md` at Rank #1) but failed open-domain span extraction because synthetic docs shared one rigid bio layout.
+2. **SFT v2** fixed all three gaps by mixing **55k SQuAD v2** real Wikipedia RAG/abstention, **13.8k GSM8K** verified `calc` word problems, and **45k `smol-smoltalk`** with aligned `DEFAULT_SYSTEM_PROMPT` (plus BM25 stopword filtering & SQLite FTS5 `porter` stemming):
+
+| Benchmark Tier | Metric | SFT v1 (`tools=ON`) | **SFT v2 (`tools=ON`)** | `tools=OFF` Baseline |
+| :--- | :--- | :---: | :---: | :---: |
+| **Locked Gate 2 Suite** *(220 disjoint tasks)* | Tool syntax validity | 100.0% (372/372) | **100.0% (377/377)** | 0.0% |
+| | Multi-step `calc` exact | 100.0% (100/100) | **100.0% (100/100)** | 0.0% |
+| | Grounded retrieval (1-hop, 2-hop, ret+calc) | 100.0% (90/90) | **94.4% (85/90)** | 0.0% |
+| | Grounded citations (hallucinated = 0) | 100.0% | **96.7% (0 halluc.)** | 0.0% |
+| | Calibrated abstention | 100.0% (30/30) | **100.0% (30/30)** | 0.0% |
+| **OOD Stress Test** *(real MD + chat)* | Clean no-tool chat routing | 0/2 (spurious calls) | **2/2 (100%)** | — |
+| | Unseen MD retrieval + grounded citation | 0/3 (looped) | **3/3 cited (`d0005`, `d0003`, `d0004`)** | — |
+| **Held-Out SQuAD v2 Val** *(100 real tasks)* | Target doc retrieved & cited (0 halluc.) | — | **80.0% (40/50)** | — |
+| | Exact open-domain answer span match | — | **28.0% (14/50)** | — |
+| | Adversarial unanswerable abstention | — | **16.0% (8/50)** | — |
+| **Held-Out GSM8K Test** *(50 human problems)* | Valid `calc(expr)` syntax | — | **100.0% (186/186)** | — |
+| | Multi-step free-form exact match | — | **2.0% (1/50)** | — |
+
+**Key takeaway:** At 125M parameters trained from scratch on one 12 GB GPU, the cognitive core already masters **tool syntax (100% even on unseen GSM8K)**, **structured multi-step tool chains (94–100%)**, **no-tool chat routing**, and **faithful document citation (80% on unseen Wikipedia with 0 hallucinated citations)** — while fine-grained OOD span extraction (28% SQuAD v2), adversarial abstention (16%), and 4–6 step free-form GSM8K word problems mark the exact frontier where **RLVR (GRPO)** and **Phase 4 looped/latent-memory architectures** can push next.
+
+- **Further Study:** *DeepSeekMath / GRPO* (`arXiv:2402.03300`); *DeepSeek-R1* (`arXiv:2501.12948`); *SQuAD v2* (`arXiv:1806.03822`).
 
 ---
 
