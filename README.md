@@ -50,3 +50,6 @@ uv run python scripts/research_cli.py chat --checkpoint runs/coregrad_125m_grpo/
 ## Authors & AI Collaboration
 - **Project Concept & Direction:** `domschl`
 - **Architecture, Implementation & Planning:** Antigravity (Gemini 4 Neon, Google DeepMind) in collaboration with `domschl`
+
+## License
+`coregrad` source code, configs, documentation, and trained open-data artifacts are released under the **[MIT License](LICENSE)**. Upstream public training datasets retain their original open licenses as documented in [docs/DATASETS.md](docs/DATASETS.md).

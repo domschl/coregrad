@@ -6,7 +6,8 @@ build-backend = "hatchling.build"
 name = "coregrad"
 version = "0.1.0"
 description = "A compact, open-data cognitive core LLM trained from scratch on a single consumer GPU."
-readme = "plan/project_plan.md"
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.13"
 dependencies = [
     "torch>=2.10",
