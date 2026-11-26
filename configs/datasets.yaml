@@ -78,6 +78,20 @@ tools_and_sft:
     format: parquet
     glob: "data/*.parquet"
 
+  rag-squad-v2:
+    repo: rajpurkar/squad_v2
+    revision: 3ffb306f725f7f2ce8431b538a0b28e504731317
+    license: CC-BY-SA-4.0
+    format: parquet
+    glob: "squad_v2/train-*.parquet"
+
+  math-gsm8k:
+    repo: openai/gsm8k
+    revision: 740312add88f50c849f834f9b763858a74596f54
+    license: MIT
+    format: parquet
+    glob: "main/train-*.parquet"
+
 reference_models:
   embedder:
     repo: google/embeddinggemma-2

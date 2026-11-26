@@ -12,7 +12,7 @@ import torch
 
 from coregrad.eval.gate2 import evaluate_gate2
 from coregrad.model import CoreGradLM, ModelConfig
-from coregrad.synthetic import generate_calc_tasks, generate_retrieval_tasks
+from coregrad.synthetic import convert_gsm8k_row, generate_calc_tasks, generate_retrieval_tasks
 from coregrad.synthetic.retrieval_gen import EVAL_SURNAMES, TRAIN_SURNAMES
 from coregrad.tokenizer import train_bpe_tokenizer
 from coregrad.tools import (
@@ -114,6 +114,10 @@ def test_hybrid_markdown_index_bm25_and_rrf(tmp_path: Path) -> None:
         hits = idx.search("speed of light vacuum prism", k=2)
         assert len(hits) >= 1
         assert hits[0].title == "Optics Notes"
+        # Porter stemming check: "travels" matches "traveling" / "survives" matches "surviving"
+        stem_hits = idx.search("freezing winter moss surviving", k=2)
+        assert len(stem_hits) >= 1
+        assert stem_hits[0].title == "Alpine Botany"
         page = idx.read(hits[0].doc_id, start=0, length=200)
         assert "299792458" in str(page["text"])
         listed = idx.list_docs("Botany")
@@ -146,6 +150,14 @@ def test_synthetic_generators_disjoint_and_executable() -> None:
         for c in calls:
             res = ex.execute_raw(c)
             assert res.ok, res.output
+
+    gsm_turns = convert_gsm8k_row(
+        "Natalia sold 48 clips in April and half as many in May. Total?",
+        "May: 48/2 = <<48/2=24>>24.\nTotal: 48+24 = <<48+24=72>>72.\n#### 72",
+    )
+    assert gsm_turns is not None
+    gsm_calls = [t.content for t in gsm_turns if t.role == "call"]
+    assert gsm_calls == ['calc(expr="48/2")', 'calc(expr="48+24")']
 
 
 def test_reward_scoring_and_cpu_sft_grpo_gate2_pipeline(tmp_path: Path) -> None:

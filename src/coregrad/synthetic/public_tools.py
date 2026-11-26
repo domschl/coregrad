@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -11,11 +12,20 @@ from typing import Any
 import pyarrow.parquet as pq
 
 from coregrad.config import REPO_ROOT, load_local_paths, load_yaml
-from coregrad.tools.protocol import Turn, format_tool_call
+from coregrad.tools.calc import safe_calc
+from coregrad.tools.protocol import DEFAULT_SYSTEM_PROMPT, Turn, format_tool_call
 
 _HERMES_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 _HERMES_RESP_RE = re.compile(r"<tool_response>\s*(.*?)\s*</tool_response>", re.DOTALL)
 _GLAIVE_CALL_RE = re.compile(r"<functioncall>\s*(\{.*?\})\s*(?:<\|endoftext\|>|$)", re.DOTALL)
+_GSM8K_CALC_RE = re.compile(r"<<([^<>]+)=([^<>]+)>>")
+_QUERY_STOPWORDS = frozenset(
+    {
+        "what", "when", "where", "who", "why", "how", "which", "did", "does", "do",
+        "is", "are", "was", "were", "the", "a", "an", "in", "of", "to", "for", "on",
+        "at", "by", "with", "from", "as", "and", "or", "that", "this", "it",
+    }
+)
 
 
 def _is_simple_args(args: Any) -> bool:
@@ -205,7 +215,11 @@ def iter_glaive_trajectories(files: list[Path], limit: int | None = None) -> Ite
                     return
 
 
-def iter_smoltalk_trajectories(files: list[Path], limit: int | None = None) -> Iterator[list[Turn]]:
+def iter_smoltalk_trajectories(
+    files: list[Path],
+    limit: int | None = None,
+    use_default_system_prompt: bool = True,
+) -> Iterator[list[Turn]]:
     count = 0
     for f in files:
         pf = pq.ParquetFile(f)
@@ -217,14 +231,180 @@ def iter_smoltalk_trajectories(files: list[Path], limit: int | None = None) -> I
                     continue
                 turns: list[Turn] = []
                 total_chars = 0
+                has_system = False
                 for msg in msgs:
                     role = msg.get("role", "")
                     content = str(msg.get("content", "")).strip()
                     if not content or role not in ("system", "user", "assistant"):
                         continue
+                    if role == "system":
+                        has_system = True
                     turns.append(Turn(role, content))
                     total_chars += len(content)
-                if len(turns) >= 2 and total_chars <= 6000 and any(t.role == "assistant" for t in turns):
+                if len(turns) >= 2 and total_chars <= 5000 and any(t.role == "assistant" for t in turns):
+                    # Align system prompt with cognitive-core default so the model learns
+                    # to answer general chat / conceptual questions directly without calling tools.
+                    if use_default_system_prompt and not has_system:
+                        turns = [Turn("system", DEFAULT_SYSTEM_PROMPT), *turns]
+                    yield turns
+                    count += 1
+                    if limit is not None and count >= limit:
+                        return
+
+
+def _build_search_query(title: str, question: str) -> str:
+    clean_title = title.replace("_", " ").strip()
+    words = [w for w in re.findall(r"[A-Za-z0-9]+", question) if w.lower() not in _QUERY_STOPWORDS]
+    q_part = " ".join(words[:7])
+    if clean_title and clean_title.lower() not in q_part.lower():
+        return f"{clean_title} {q_part}".strip()
+    return q_part or question[:80]
+
+
+def iter_squad_v2_trajectories(
+    files: list[Path],
+    limit: int | None = None,
+    seed: int = 2026,
+) -> Iterator[list[Turn]]:
+    """Convert SQuAD v2 real-passage QA & unanswerable questions into grounded search+cite trajectories."""
+    rng = random.Random(seed)
+    rows_pool: list[dict[str, Any]] = []
+    for f in files:
+        pf = pq.ParquetFile(f)
+        tbl = pf.read(columns=["title", "context", "question", "answers"])
+        rows_pool.extend(tbl.to_pylist())
+
+    if not rows_pool:
+        return
+
+    # Group unique contexts by title for clean negative distractors from other topics
+    by_title: dict[str, list[str]] = {}
+    for row in rows_pool:
+        title = str(row.get("title", "")).replace("_", " ").strip()
+        ctx = str(row.get("context", "")).strip()
+        if title and ctx:
+            lst = by_title.setdefault(title, [])
+            if len(lst) < 5 and ctx not in lst:
+                lst.append(ctx)
+    all_titles = list(by_title.keys())
+    rng.shuffle(rows_pool)
+
+    count = 0
+    for row in rows_pool:
+        title = str(row.get("title", "")).replace("_", " ").strip()
+        context = str(row.get("context", "")).strip()
+        question = str(row.get("question", "")).strip()
+        answers_obj = row.get("answers") or {}
+        ans_texts = answers_obj.get("text", []) if isinstance(answers_obj, dict) else []
+        if not title or not context or not question or len(context) > 1600:
+            continue
+
+        target_id = f"d{rng.randint(1, 999):04d}"
+        hits: list[dict[str, object]] = [
+            {"doc_id": target_id, "title": title, "span": [0, len(context)], "text": context}
+        ]
+        # Add 1-2 distractor passages from different topics and shuffle hit ranks
+        n_dist = rng.choice([1, 2])
+        for _ in range(n_dist):
+            other_t = rng.choice(all_titles)
+            if other_t == title:
+                continue
+            other_ctx = rng.choice(by_title[other_t])[:900]
+            dist_id = f"d{rng.randint(1, 999):04d}"
+            if dist_id == target_id:
+                dist_id = f"d{(int(target_id[1:]) % 998) + 1:04d}"
+            hits.append(
+                {"doc_id": dist_id, "title": other_t, "span": [0, len(other_ctx)], "text": other_ctx}
+            )
+        rng.shuffle(hits)
+
+        query = _build_search_query(title, question)
+        res_json = json.dumps(hits, ensure_ascii=False)
+
+        if ans_texts:
+            ans = str(ans_texts[0]).strip()
+            if not ans:
+                continue
+            turns = [
+                Turn("system", DEFAULT_SYSTEM_PROMPT),
+                Turn("user", question),
+                Turn("think", f"Search the documents for information about {title}."),
+                Turn("call", format_tool_call("search", query=query, k=3)),
+                Turn("result", res_json),
+                Turn("think", f"Passage {target_id} ({title}) directly answers the question: {ans}."),
+                Turn("assistant", f"According to the documents, {ans} <|cite|>{target_id}<|/cite|>."),
+            ]
+        else:
+            turns = [
+                Turn("system", DEFAULT_SYSTEM_PROMPT),
+                Turn("user", question),
+                Turn("think", f"Search the documents for information about {title}."),
+                Turn("call", format_tool_call("search", query=query, k=3)),
+                Turn("result", res_json),
+                Turn("think", "The retrieved passages do not contain an answer to this question. I should abstain."),
+                Turn("assistant", "I could not find the answer to that question in the available documents."),
+            ]
+
+        yield turns
+        count += 1
+        if limit is not None and count >= limit:
+            return
+
+
+def convert_gsm8k_row(question: str, answer_text: str) -> list[Turn] | None:
+    """Convert one GSM8K solution with <<expr=val>> tags into a verified calc() trajectory."""
+    if "####" not in answer_text:
+        return None
+    body, final_part = answer_text.rsplit("####", 1)
+    final_num = final_part.strip().replace(",", "")
+    if not final_num:
+        return None
+
+    calc_matches = list(_GSM8K_CALC_RE.finditer(body))
+    if not calc_matches or len(calc_matches) > 5:
+        return None
+
+    turns: list[Turn] = [
+        Turn("system", DEFAULT_SYSTEM_PROMPT),
+        Turn("user", question.strip()),
+    ]
+    # Emit concise step-by-step think + verified calc() calls
+    lines = [ln.strip() for ln in body.strip().splitlines() if ln.strip()]
+    any_valid_call = False
+    for line in lines:
+        matches = list(_GSM8K_CALC_RE.finditer(line))
+        clean_thought = _GSM8K_CALC_RE.sub(lambda m: m.group(2), line).strip()
+        if clean_thought:
+            turns.append(Turn("think", clean_thought))
+        for m in matches:
+            raw_expr = m.group(1).strip().replace(",", "").replace("x", "*").replace("X", "*")
+            try:
+                computed = safe_calc(raw_expr)
+            except (ValueError, ArithmeticError, OverflowError):
+                return None
+            turns.append(Turn("call", format_tool_call("calc", expr=raw_expr)))
+            turns.append(Turn("result", computed))
+            any_valid_call = True
+
+    if not any_valid_call:
+        return None
+
+    turns.append(Turn("assistant", f"The final answer is {final_num}."))
+    return turns
+
+
+def iter_gsm8k_trajectories(files: list[Path], limit: int | None = None) -> Iterator[list[Turn]]:
+    count = 0
+    for f in files:
+        pf = pq.ParquetFile(f)
+        for batch in pf.iter_batches(batch_size=512, columns=["question", "answer"]):
+            qs = batch.column(0).to_pylist()
+            ans_list = batch.column(1).to_pylist()
+            for q, a in zip(qs, ans_list, strict=True):
+                if not isinstance(q, str) or not isinstance(a, str):
+                    continue
+                turns = convert_gsm8k_row(q, a)
+                if turns is not None:
                     yield turns
                     count += 1
                     if limit is not None and count >= limit:

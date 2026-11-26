@@ -21,8 +21,10 @@ from coregrad.synthetic import (
     generate_calc_tasks,
     generate_retrieval_tasks,
     iter_glaive_trajectories,
+    iter_gsm8k_trajectories,
     iter_hermes_trajectories,
     iter_smoltalk_trajectories,
+    iter_squad_v2_trajectories,
     iter_xlam_trajectories,
     load_cached_public_tool_files,
 )
@@ -43,12 +45,14 @@ def _turns_to_record(source: str, turns: list[Turn]) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build Phase 3 synthetic + public tool SFT/midtrain datasets.")
-    parser.add_argument("--n-calc", type=int, default=40000)
-    parser.add_argument("--n-retrieval", type=int, default=40000)
-    parser.add_argument("--n-xlam", type=int, default=20000)
-    parser.add_argument("--n-hermes", type=int, default=15000)
-    parser.add_argument("--n-glaive", type=int, default=15000)
-    parser.add_argument("--n-smoltalk", type=int, default=30000)
+    parser.add_argument("--n-calc", type=int, default=15000)
+    parser.add_argument("--n-retrieval", type=int, default=20000)
+    parser.add_argument("--n-squad", type=int, default=55000)
+    parser.add_argument("--n-gsm8k-repeats", type=int, default=2)
+    parser.add_argument("--n-xlam", type=int, default=5000)
+    parser.add_argument("--n-hermes", type=int, default=5000)
+    parser.add_argument("--n-glaive", type=int, default=5000)
+    parser.add_argument("--n-smoltalk", type=int, default=45000)
     parser.add_argument("--n-eval-calc", type=int, default=100)
     parser.add_argument("--n-eval-retrieval", type=int, default=120)
     parser.add_argument("--skip-midtrain-shards", action="store_true")
@@ -74,6 +78,7 @@ def main() -> int:
 
     cached = load_cached_public_tool_files()
     for name, fn, limit in (
+        ("rag-squad-v2", lambda fs, limit: iter_squad_v2_trajectories(fs, limit=limit, seed=args.seed), args.n_squad),
         ("tool-xlam", iter_xlam_trajectories, args.n_xlam),
         ("tool-hermes", iter_hermes_trajectories, args.n_hermes),
         ("tool-glaive", iter_glaive_trajectories, args.n_glaive),
@@ -86,6 +91,16 @@ def main() -> int:
         loaded = [_turns_to_record(name, turns) for turns in fn(files, limit=limit)]
         records.extend(loaded)
         print(f"  public {name:14s}: {len(loaded):,} trajectories", flush=True)
+
+    gsm_files = cached.get("math-gsm8k", [])
+    if gsm_files and args.n_gsm8k_repeats > 0:
+        gsm_loaded = [_turns_to_record("math-gsm8k", turns) for turns in iter_gsm8k_trajectories(gsm_files)]
+        records.extend(gsm_loaded * args.n_gsm8k_repeats)
+        print(
+            f"  public {'math-gsm8k':14s}: {len(gsm_loaded):,} unique x {args.n_gsm8k_repeats} "
+            f"= {len(gsm_loaded) * args.n_gsm8k_repeats:,} trajectories",
+            flush=True,
+        )
 
     rng = random.Random(args.seed)
     rng.shuffle(records)

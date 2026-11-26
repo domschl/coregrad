@@ -13,6 +13,15 @@ from typing import Protocol
 import numpy as np
 
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
+_STOPWORDS = frozenset(
+    {
+        "a", "an", "and", "are", "as", "at", "be", "by", "did", "do", "does",
+        "for", "from", "had", "has", "have", "he", "her", "his", "how", "i",
+        "in", "into", "is", "it", "its", "of", "on", "or", "she", "that",
+        "the", "their", "them", "they", "this", "to", "was", "we", "were",
+        "what", "when", "where", "which", "who", "why", "with", "you", "your",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -108,8 +117,12 @@ class EmbeddingGemma2Embedder:
         return self._encode(texts, prompt_name="query")
 
 
-def _tokenize_bm25(text: str) -> list[str]:
-    return [t.lower() for t in _WORD_RE.findall(text)]
+def _tokenize_bm25(text: str, drop_stopwords: bool = False) -> list[str]:
+    toks = [t.lower() for t in _WORD_RE.findall(text)]
+    if not drop_stopwords:
+        return toks
+    filtered = [t for t in toks if t not in _STOPWORDS and len(t) > 1]
+    return filtered or toks
 
 
 def chunk_markdown_text(
@@ -187,7 +200,7 @@ class InMemoryBM25Retriever:
         self._avgdl = sum(c[6] for c in self._chunks) / self._n_chunks
 
     def search(self, query: str, k: int = 3) -> list[SearchHit]:
-        q_terms = _tokenize_bm25(query)
+        q_terms = _tokenize_bm25(query, drop_stopwords=True)
         if not q_terms or not self._chunks:
             return []
 
@@ -273,7 +286,8 @@ class HybridMarkdownIndex:
                 text TEXT NOT NULL
             );
             CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-                title, text, content='chunks', content_rowid='chunk_id'
+                title, text, content='chunks', content_rowid='chunk_id',
+                tokenize='porter unicode61'
             );
             """
         )
@@ -351,7 +365,7 @@ class HybridMarkdownIndex:
         return self.build_from_documents(docs, chunk_chars=chunk_chars, overlap_chars=overlap_chars)
 
     def _bm25_ranks(self, query: str, limit: int = 20) -> list[int]:
-        terms = _tokenize_bm25(query)
+        terms = _tokenize_bm25(query, drop_stopwords=True)
         if not terms:
             return []
         fts_query = " OR ".join(f'"{t}"' for t in terms[:16])

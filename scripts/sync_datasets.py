@@ -70,6 +70,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Sync recommended public datasets to local HF cache.")
     parser.add_argument("--extra-edu", action="store_true", help="Download fineweb-edu shards 002 & 003")
     parser.add_argument("--smoltalk", action="store_true", help="Download HuggingFaceTB/smol-smoltalk")
+    parser.add_argument("--squad-gsm8k", action="store_true", help="Download rajpurkar/squad_v2 and openai/gsm8k")
     parser.add_argument("--all", action="store_true", help="Download all recommended Phase 1–3 additions")
     args = parser.parse_args()
 
@@ -79,7 +80,8 @@ def main() -> int:
 
     do_edu = args.extra_edu or args.all
     do_smoltalk = args.smoltalk or args.all
-    if not (do_edu or do_smoltalk):
+    do_squad_gsm8k = args.squad_gsm8k or args.all
+    if not (do_edu or do_smoltalk or do_squad_gsm8k):
         parser.print_help()
         return 0
 
@@ -105,6 +107,33 @@ def main() -> int:
             repo_id="HuggingFaceTB/smol-smoltalk",
             filenames=sorted(files),
             license_name="apache-2.0",
+            cache_root=paths.hf_cache_dir,
+        )
+
+    if do_squad_gsm8k:
+        api = HfApi()
+        squad_files = [
+            f
+            for f in api.list_repo_files("rajpurkar/squad_v2", repo_type="dataset")
+            if f.endswith(".parquet")
+        ]
+        download_files(
+            name="rag-squad-v2",
+            repo_id="rajpurkar/squad_v2",
+            filenames=sorted(squad_files),
+            license_name="CC-BY-SA-4.0",
+            cache_root=paths.hf_cache_dir,
+        )
+        gsm_files = [
+            f
+            for f in api.list_repo_files("openai/gsm8k", repo_type="dataset")
+            if f.startswith("main/") and f.endswith(".parquet")
+        ]
+        download_files(
+            name="math-gsm8k",
+            repo_id="openai/gsm8k",
+            filenames=sorted(gsm_files),
+            license_name="MIT",
             cache_root=paths.hf_cache_dir,
         )
 

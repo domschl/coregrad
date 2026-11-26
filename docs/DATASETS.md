@@ -32,12 +32,14 @@ All Phase 3 post-training trajectories are normalized into a single compact cogn
 
 ### 2A. Public Tool-Calling & Chat Datasets
 
-| Key | Hugging Face Dataset | Pinned Revision | License | Normalized Trajectories Used | Role |
+| Key | Hugging Face Dataset | Pinned Revision | License | Normalized Trajectories Used (SFT v2) | Role |
 | :--- | :--- | :--- | :--- | :---: | :--- |
-| `tool-xlam` | [`Salesforce/xlam-function-calling-60k`](https://huggingface.co/datasets/Salesforce/xlam-function-calling-60k) | `26d14ebfe18b1f7b524bd39b404b50af5dc97866` | **CC-BY-4.0** | 20,000 | Clean 1–2 call function argument binding |
-| `tool-hermes` | [`NousResearch/hermes-function-calling-v1`](https://huggingface.co/datasets/NousResearch/hermes-function-calling-v1) | `dae3e1d28cfbcf4b915c04ea1e072030529b4bda` | **Apache-2.0** | 10,007 | Multi-turn tool invocation & response synthesis |
-| `tool-glaive` | [`glaiveai/glaive-function-calling-v2`](https://huggingface.co/datasets/glaiveai/glaive-function-calling-v2) | `e7f4b6456019f5d8bcb991ef0dd67d8ff23221ac` | **Apache-2.0** | 15,000 | Tool routing & "no tool required" refusal/chat turns |
-| `sft-smoltalk` | [`HuggingFaceTB/smol-smoltalk`](https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk) | `f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc` | **Apache-2.0** | 30,000 | Clean general English instruction following & conciseness |
+| `rag-squad-v2` | [`rajpurkar/squad_v2`](https://huggingface.co/datasets/rajpurkar/squad_v2) (`train`) | `3ffb306f725f7f2ce8431b538a0b28e504731317` | **CC-BY-SA-4.0** | 55,000 | Real open-domain reading-comprehension RAG + unanswerable abstention |
+| `math-gsm8k` | [`openai/gsm8k`](https://huggingface.co/datasets/openai/gsm8k) (`main/train`) | `740312add88f50c849f834f9b763858a74596f54` | **MIT** | 6,925 (×2 = 13,850) | Human-written multi-step math word problems with verified `calc(expr)` calls |
+| `sft-smoltalk` | [`HuggingFaceTB/smol-smoltalk`](https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk) | `f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc` | **Apache-2.0** | 45,000 | Clean general English chat & no-tool routing (aligned `DEFAULT_SYSTEM_PROMPT`) |
+| `tool-xlam` | [`Salesforce/xlam-function-calling-60k`](https://huggingface.co/datasets/Salesforce/xlam-function-calling-60k) | `26d14ebfe18b1f7b524bd39b404b50af5dc97866` | **CC-BY-4.0** | 5,000 | Clean 1–2 call function argument binding |
+| `tool-hermes` | [`NousResearch/hermes-function-calling-v1`](https://huggingface.co/datasets/NousResearch/hermes-function-calling-v1) | `dae3e1d28cfbcf4b915c04ea1e072030529b4bda` | **Apache-2.0** | 5,000 | Multi-turn tool invocation & response synthesis |
+| `tool-glaive` | [`glaiveai/glaive-function-calling-v2`](https://huggingface.co/datasets/glaiveai/glaive-function-calling-v2) | `e7f4b6456019f5d8bcb991ef0dd67d8ff23221ac` | **Apache-2.0** | 5,000 | Tool routing & "no tool required" refusal/chat turns |
 
 ### 2B. Deterministic Programmatic Synthetic Generators (Open Code in `src/coregrad/synthetic/`)
 
@@ -69,6 +71,8 @@ All Phase 3 post-training trajectories are normalized into a single compact cogn
 - **xLAM-Function-Calling-60k:** Liu, Z., Hoang, T., Zhang, J., Zhu, M., Lan, T., Kokane, S., Tan, J., Yao, W., Liu, Z., Feng, Y., Murthy, R., Yang, L., Savarese, S., Niebles, J. C., Wang, H., Heinecke, S., & Xiong, C. (2024). *APIGen: Automated Pipeline for Generating Verifiable and Diverse Function-Calling Datasets* (`arXiv:2406.18518`).
 - **Hermes Function Calling v1:** Teknium / Nous Research (2024). *Hermes Function Calling v1 Dataset*.
 - **Glaive Function Calling v2:** Glaive AI (2024). *Glaive Function Calling v2 Dataset*.
+- **SQuAD v2:** Rajpurkar, P., Jia, R., & Liang, P. (2018). *Know What You Don't Know: Unanswerable Questions for SQuAD.* ACL 2018 (`arXiv:1806.03822`).
+- **GSM8K:** Cobbe, K., Kosaraju, V., Bavarian, M., Chen, M., Jun, H., Kaiser, Ł., Plappert, M., Tworek, J., Hilton, J., Nakano, R., Hesse, C., & Schulman, J. (2021). *Training Verifiers to Solve Math Word Problems* (`arXiv:2110.14168`).
 - **EmbeddingGemma 2:** Google DeepMind (2026). *EmbeddingGemma 2: Unified and Efficient Multimodal Representations* (`arXiv:2610.37364`).
 
 ---
