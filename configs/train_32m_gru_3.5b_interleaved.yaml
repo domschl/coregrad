@@ -1,0 +1,34 @@
+# Phase 5.2 Scale-Up (3.5B Winning Branch B): 500M 50/50 Interleaved Replay + Masked Phase 5 DSL/SFT WSD Decay
+# Branched from 3.0B pure WSD plateau (runs/coregrad_32m_gru_p5base/ckpt_3.0B.pt) -> 3.5B total tokens
+run_name: coregrad_32m_gru_3.5b_interleaved
+model_config: configs/model_32m_looped16_gru.yaml
+optimizer: muon
+total_tokens: 500000000
+seq_len: 2048
+micro_batch: 8
+grad_accum: 8
+peak_lr: 8.0e-4
+min_lr: 8.0e-5
+muon_lr: 0.015
+weight_decay: 0.05
+grad_clip: 1.0
+warmup_fraction: 0.0
+decay_fraction: 1.0
+decay_style: cosine
+init_optimizer: true
+interleave_sft_jsonl: data/phase5/sft/train.jsonl
+interleave_sft_ratio: 0.50
+compile_model: true
+activation_checkpointing: false
+seed: 2027
+log_interval: 50
+eval_interval: 500
+eval_val_batches: 16
+sample_count: 6
+sample_max_tokens: 112
+save_interval: 2500
+mixture:
+  edu-en: 0.45
+  cosmo: 0.25
+  code-starcoder: 0.17
+  finemath: 0.13

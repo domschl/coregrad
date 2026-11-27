@@ -254,6 +254,40 @@ We then ran a controlled 5-step ablation on our locked unseen-vocabulary logic b
 2. **Never Use Small Fixed Vocabularies in Synthetic Generators:** Training on only 32 fixed fictional words caused `loss → 0.0001` memorization; the model hallucinated memorized training predicates (`tovix`) onto unseen eval words. Expanding to `3,400+` disjoint training pseudowords (`_OPEN_TRAIN_PREDS`) immediately lifted `45m` by `+21.7%` ID / `+11.2%` OOD.
 3. **BPE Operator-Spacing Alignment (`+34%` ID / `+20%` OOD from whitespace alone!):** In byte-level BPE, prose words carry a leading space (`" treldon"` → `[1870, 468, 294]`), whereas tight operators strip it (`"treldon->plendor"` → `[115, 293, 468, 294, 538, 484, 479, 305]`, 8 tokens, **zero** leading-token match). Padding operators with single spaces (`" treldon -> plendor"` → `[1870, 468, 294, 4919, 566, 479, 305]`) uses **fewer tokens** while restoring **100% exact token-ID identity** for induction/copy heads — catapulting `25m-looped14` to **`78.3% ID / 44.4% OOD`** (`+40.0%` ID over English `cot`) and `45m-looped14` to **`76.7% ID / 50.0% OOD`** (`d2 = 87.5%`, `d10 = 60.0%`, `99.2%` valid syntax), even on pre-fix checkpoints still suffering repetition loops at `d10–d12`.
 
+---
+
+## 4. Phase 5.2 — Interleaved Pre/Post WSD Mid-Training A/B on `coregrad-32m-looped16-gru` (`1.5B` Tokens)
+
+We trained **`coregrad-32m-looped16-gru`** (`33.04M` params, `2+4×3+2` Outer GRU Depth-RNN, locked `muon_lr=0.015, wd=0.05`) to a reusable **`1.2B`-token pure WSD plateau** (`decay_fraction=0.0`, `mean_bpb=0.9374` best / `0.9404` final, `wRMS=0.120`, `actRMS=13.1`, `loop_cos=0.839`, `rep4(T0/T.7)=48%/14%`, `94.8k tok/s`, `7.57 GB` VRAM), then branched two controlled **`300M`-token decays** inheriting the exact plateau Muon state (`1.5B` total pretraining/decay tokens):
+
+- **Branch A (`Sequential` Baseline):** `300M` pure pretraining cosine decay (`p5a_decay`: **`mean_bpb = 0.8471`**, beating `45m-dense` `0.8609` at 25% fewer params, `actRMS=8.3`, `loop_cos=0.782`, `rep4(T.7)=10.1%`) → full 2-epoch masked SFT (`p5a_sft`, `3,910` steps / `256M` tok, `~50 min`) on `data/phase5/sft/train.jsonl` (`193,250` Phase 3 + BPE-aligned `coregrad-DSL` trajectories).
+- **Branch B (`Interleaved` 50/50):** `300M` mixed cosine decay (`p5b_interleaved`, `~54 min`) blending 50% full-LM pretraining replay + 50% packed assistant-masked Phase 5 trajectories inside every `grad_accum` step (`rep4(T0/T.7) = 45%/6%`, `actRMS = 8.5`) — evaluated **with zero extra SFT (`p5b_interleaved`)** and after a light 600-step / `7.5`-min polish (**`p5b_polish`**).
+
+### Locked 1.5B Head-to-Head Scoreboard (`33.04M` Outer-GRU vs. `125M` Dense Reference)
+
+| Metric (Locked Benchmarks) | Branch A: `p5a_sft` (Sequential) | **Branch B: `p5b_interleaved` (0 extra SFT!)** | **Branch B+: `p5b_polish` (+7.5m polish)** | Ref: `125m` dense (`6.0B`, `sft_v2`) |
+|---|---:|---:|---:|---:|
+| **Post-Trained Val BPB *(Forgetting)*** | `1.0169` *(+0.170 loss!)* | **`0.8903` (`−0.1266` better!)** | **`0.8978`** | — |
+| `cosmo` / `code` / `finemath` / `edu` BPB | `0.784 / 0.894 / 1.169 / 1.221` | **`0.698 / 0.690 / 1.036 / 1.137`** | `0.702 / 0.703 / 1.045 / 1.142` | — |
+| **Phase 5 SFT Val Loss** | `0.8578` | `0.8553` | **`0.8424`** | — |
+| **Gate 2 Tool Syntax** | `100.0%` (`371/371`) | **`100.0%` (`372/372`)** | **`100.0%` (`372/372`)** | `100.0%` |
+| **Gate 2 Calc Accuracy** | `100.0%` (`100/100`) | **`100.0%` (`100/100`)** | **`100.0%` (`100/100`)** | `100.0%` |
+| **Gate 2 Grounded Retrieval** | `98.9%` (`89/90`) | **`100.0%` (`90/90`)** | **`100.0%` (`90/90`)** | `94.4%` (`85/90`) |
+| **Gate 2 Citation Rate (Halluc.)** | `98.9%` (`0`) | **`100.0%` (`0`)** | **`100.0%` (`0`)** | `96.7%` (`0`) |
+| **Gate 2 Abstention** | `100.0%` (`30/30`) | **`100.0%` (`30/30`)** | **`100.0%` (`30/30`)** | `100.0%` |
+| **OOD Chat No-Tool Routing** | `100.0%` (`4/4`) | **`100.0%` (`4/4`)** | **`100.0%` (`4/4`)** | `100.0%` |
+| **OOD SQuAD v2 Target Cite / Span EM** | `56.0%` / **`32.0%`** | `56.0%` / `30.0%` | **`58.0%`** / `30.0%` | `80.0%` / `24.0%` |
+| **OOD SQuAD v2 Unans. Abstain** | **`48.0%`** | `34.0%` | `38.0%` | `16.0%` |
+| **OOD GSM8K EM / Syntax** | **`8.0%`** / `100%` | **`8.0%`** / `100%` | **`8.0%`** / `100%` | `4.0%` / `100%` |
+| **Locked `coregrad-DSL` (160 tasks)** | `96.2%` (`154/160`) | **`97.5%` (`156/160`)** | **`97.5%` (`156/160`)** | — |
+| — `bindings` / `pipelines` / `symbolic` | `100% / 100% / 100%` | **`100% / 100% / 100%`** | **`100% / 100% / 100%`** | — |
+| — `logic` (`prove`, unseen `_EVAL_PREDS` `d2–8`) | `85.0%` (`34/40`) | **`90.0%` (`36/40`)** | **`90.0%` (`36/40`)** | — |
+| **Grammar / 4-Way Completion** | `90.6%` / `45.8%` | `87.5%` / `45.8%` | `84.4%` / **`50.0%`** | `93.8%` / `62.5%` |
+
+**Verdict — Decisive Win for Interleaved WSD (`Branch B` / `B+`):**
+1. **Perfect Gate 2 (`100/100/100/100(0h)/100`) & `97.5%` `coregrad-DSL` at `33.04M` params:** With **zero separate SFT**, `p5b_interleaved` beat our `125M` dense reference (`6.0B` tok) on Gate 2 retrieval (`100.0%` vs `94.4%`), OOD SQuAD EM (`30.0%` vs `24.0%`), OOD SQuAD unanswerable abstention (`34–38%` vs `16%`), and OOD GSM8K (`8.0%` vs `4.0%`), while hitting `100%` on DSL bindings, pipelines/recursion, and SymPy algebra/calculus and **`90.0%`** on unseen-vocab multi-step `prove()` (`d2–d8`).
+2. **Catastrophic Forgetting Nearly Eliminated:** Sequential 2-epoch SFT degraded validation BPB by `+0.170` (`0.8471 → 1.0169`, hurting `code-starcoder` by `+0.247` BPB), whereas 50/50 interleaved WSD decay retained **`0.8903` BPB** (`−0.1266` BPB better general language/code retention) while *also* beating sequential SFT on Gate 2, `coregrad-DSL`, and SFT val loss (`0.8553` vs `0.8578`; `0.8424` after 7.5-min polish).
+
 ### Remaining Optional Phase 4A Ablations
 - Cognitive Core Purity A/B (`25m` pretrained with `0%` web/encyclopedic `edu-en` vs. `45% edu-en`).
 - GQA KV-Bank scaling check on `45m` / `32m-looped16-gru`.
