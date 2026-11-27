@@ -20,6 +20,7 @@ def main() -> int:
     parser.add_argument("--weight-decay", type=float, default=None, help="Override weight_decay")
     parser.add_argument("--resume", action="store_true", help="Resume from latest.pt in run dir")
     parser.add_argument("--init-from", type=Path, default=None, help="Initialize weights from checkpoint")
+    parser.add_argument("--init-optimizer", action="store_true", help="Also restore optimizer state from --init-from")
     parser.add_argument("--no-compile", action="store_true")
     args = parser.parse_args()
 
@@ -35,7 +36,12 @@ def main() -> int:
         overrides["compile_model"] = False
 
     cfg = TrainConfig.from_yaml(args.config, **overrides)
-    train_pretrain(cfg, resume=args.resume, init_from=args.init_from)
+    train_pretrain(
+        cfg,
+        resume=args.resume,
+        init_from=args.init_from,
+        init_optimizer=True if args.init_optimizer else None,
+    )
     return 0
 
 

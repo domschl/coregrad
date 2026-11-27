@@ -1,0 +1,23 @@
+# Phase 5.2 Branch A (Sequential Baseline): Full 2-epoch masked SFT on Phase 5 unified dataset
+run_name: coregrad_32m_gru_p5a_sft
+init_from: runs/coregrad_32m_gru_p5a_decay/latest.pt
+train_jsonl: data/phase5/sft/train.jsonl
+val_jsonl: data/phase5/sft/val.jsonl
+eval_tasks_json: data/phase3/eval_tasks.json
+optimizer: adamw
+seq_len: 2048
+pack_sequences: true
+micro_batch: 4
+grad_accum: 8
+epochs: 2
+peak_lr: 2.5e-4
+min_lr: 2.5e-5
+weight_decay: 0.05
+grad_clip: 1.0
+warmup_fraction: 0.05
+compile_model: true
+activation_checkpointing: false
+seed: 2026
+log_interval: 20
+eval_interval: 300
+rollout_probe_count: 4

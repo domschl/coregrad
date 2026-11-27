@@ -1,0 +1,31 @@
+# Phase 5.2 Branch A (Sequential Baseline): 300M standard pretraining WSD decay from 1.2B plateau
+run_name: coregrad_32m_gru_p5a_decay
+model_config: configs/model_32m_looped16_gru.yaml
+optimizer: muon
+total_tokens: 300000000
+seq_len: 2048
+micro_batch: 8
+grad_accum: 8
+peak_lr: 8.0e-4
+min_lr: 8.0e-5
+muon_lr: 0.015
+weight_decay: 0.05
+grad_clip: 1.0
+warmup_fraction: 0.0
+decay_fraction: 1.0
+decay_style: cosine
+init_optimizer: true
+compile_model: true
+activation_checkpointing: false
+seed: 2026
+log_interval: 50
+eval_interval: 500
+eval_val_batches: 16
+sample_count: 6
+sample_max_tokens: 112
+save_interval: 2500
+mixture:
+  edu-en: 0.45
+  cosmo: 0.25
+  code-starcoder: 0.17
+  finemath: 0.13

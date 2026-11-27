@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import random
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -24,6 +25,7 @@ from coregrad.tokenizer import CoreGradTokenizer
 from coregrad.train.monitor import RunLogger
 from coregrad.train.optim import build_optimizer
 from coregrad.train.schedule import wsd_lr
+from coregrad.train.sft import load_encoded_sft_examples, pack_examples_to_rows, pack_sft_batch
 
 
 @dataclass
@@ -52,6 +54,9 @@ class TrainConfig:
     sample_count: int = 6
     sample_max_tokens: int = 96
     save_interval: int = 500
+    init_optimizer: bool = False
+    interleave_sft_jsonl: str | None = None
+    interleave_sft_ratio: float = 0.0
     mixture: dict[str, float] = field(
         default_factory=lambda: {
             "edu-en": 0.45,
@@ -103,11 +108,48 @@ def _save_checkpoint(
     tmp_path.replace(path)
 
 
+class _PackedSFTCycle:
+    """Cyclic packed assistant-masked SFT batch sampler for interleaved WSD mid-training."""
+
+    def __init__(
+        self,
+        jsonl_path: Path,
+        tokenizer: CoreGradTokenizer,
+        seq_len: int,
+        batch_size: int,
+        seed: int = 1337,
+    ) -> None:
+        self.seq_len = seq_len
+        self.pad_id = tokenizer.pad_id
+        self.batch_size = batch_size
+        self.rng = random.Random(seed)
+        examples = load_encoded_sft_examples(jsonl_path, tokenizer, max_seq_len=seq_len)
+        if not examples:
+            raise ValueError(f"No valid SFT examples loaded from {jsonl_path}")
+        self.rows = pack_examples_to_rows(examples, seq_len=seq_len, pad_id=self.pad_id, seed=seed)
+        self.n_examples = len(examples)
+        self.order = list(range(len(self.rows)))
+        self.rng.shuffle(self.order)
+        self.cursor = 0
+
+    def next_batch(self, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+        batch: list[tuple[list[int], list[int]]] = []
+        while len(batch) < self.batch_size:
+            if self.cursor >= len(self.order):
+                self.rng.shuffle(self.order)
+                self.cursor = 0
+            batch.append(self.rows[self.order[self.cursor]])
+            self.cursor += 1
+        x, y = pack_sft_batch(batch, seq_len=self.seq_len, pad_id=self.pad_id)
+        return x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+
+
 def train_pretrain(
     cfg: TrainConfig,
     *,
     resume: bool = False,
     init_from: Path | None = None,
+    init_optimizer: bool | None = None,
     shards_dir: Path | None = None,
     tokenizer_path: Path | None = None,
     runs_dir: Path | None = None,
@@ -163,7 +205,12 @@ def train_pretrain(
     elif init_from is not None:
         ckpt = torch.load(init_from, map_location="cpu", weights_only=False)
         model.load_state_dict(ckpt["model_state_dict"])
-        print(f"[init-from] Loaded weights from {init_from}", flush=True)
+        load_opt = cfg.init_optimizer if init_optimizer is None else init_optimizer
+        if load_opt and "optimizer_state_dict" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            print(f"[init-from] Loaded weights + optimizer state from {init_from}", flush=True)
+        else:
+            print(f"[init-from] Loaded weights from {init_from}", flush=True)
 
     train_model: torch.nn.Module = (
         torch.compile(model) if (cfg.compile_model and dev.type == "cuda") else model
@@ -199,6 +246,26 @@ def train_pretrain(
         seed=cfg.seed + start_step,
         split="train",
     )
+
+    sft_cycle: _PackedSFTCycle | None = None
+    n_sft_micro = 0
+    if cfg.interleave_sft_jsonl and cfg.interleave_sft_ratio > 0.0:
+        sft_path = Path(cfg.interleave_sft_jsonl)
+        if not sft_path.is_absolute():
+            sft_path = REPO_ROOT / sft_path
+        sft_cycle = _PackedSFTCycle(
+            sft_path,
+            tokenizer=tokenizer,
+            seq_len=cfg.seq_len,
+            batch_size=cfg.micro_batch,
+            seed=cfg.seed + start_step + 777,
+        )
+        n_sft_micro = max(1, min(cfg.grad_accum, round(cfg.grad_accum * cfg.interleave_sft_ratio)))
+        print(
+            f"[interleave] Loaded {sft_cycle.n_examples:,} SFT trajectories -> {len(sft_cycle.rows):,} packed rows | "
+            f"ratio={n_sft_micro}/{cfg.grad_accum} ({100.0 * n_sft_micro / cfg.grad_accum:.1f}% masked SFT)",
+            flush=True,
+        )
 
     print(
         f"Starting {cfg.run_name} | {model_cfg.name} ({model.num_parameters()/1e6:.2f}M params) | "
@@ -327,8 +394,11 @@ def train_pretrain(
         optimizer.zero_grad(set_to_none=True)
 
         step_loss = 0.0
-        for _ in range(cfg.grad_accum):
-            x, y = loader.next_batch(device=dev)
+        for g_idx in range(cfg.grad_accum):
+            if sft_cycle is not None and g_idx < n_sft_micro:
+                x, y = sft_cycle.next_batch(device=dev)
+            else:
+                x, y = loader.next_batch(device=dev)
             with torch.amp.autocast(device_type=dev.type, dtype=torch.bfloat16, enabled=amp_enabled):
                 _, loss = train_model(x, y)
                 assert loss is not None
