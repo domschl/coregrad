@@ -185,7 +185,38 @@ To test how deeply tiny dense vs. looped cores can execute formal rules with **z
 2. **Real failure mode in `direct` vs. `cot`:** In `direct` mode, detecting a *single reversed implication arrow* (`syllogism_unknown`, affirming-the-consequent trap) degrades from `100%` at `d2` to `10–40%` by `d8–12` across all models. In `cot` mode, models *do* explicitly diagnose affirming-the-consequent fallacies on unseen words (`40–70%` accuracy on `syllogism_unknown` even at `d8–12`!) — proving the scratchpad unlocks sharper fallacy detection.
 3. **Why `cot` trailed `direct` on long unseen chains (classic $p^D$ BPE drift):** Inspecting generated traces shows that overfitting 600 steps to only 32 training fictional predicates (`loss ≈ 0.0004–0.001`) hurts exact verbatim copying of *unseen multi-subword nonsense words* (`quoril`, `brenvix`, `yaldor`). One drifted subword at Step 3 (`yaldor → triad`) derails Steps 4–12. Notably, **`25m-looped14`** suffered the least OOD collapse in `cot` mode (`37.5%` OOD, `35.0%` at `d12`, beating `125m`'s `20.0%` at `d12`). Expanding the training predicate pool (e.g., 500+ random pseudowords) or adding GRPO outcome rewards is a clear recipe to unlock near-100% OOD `cot` chaining.
 
-### 2.3 Remaining Optional Phase 4A Ablations
-- Cognitive Core Purity A/B (`25m-dense` pretrained 1.5B tokens with `0%` web/encyclopedic `edu-en` vs. our `45% edu-en` baseline).
-- GQA KV-Bank scaling check on `45m` and `25m-looped14` (~2.5×–3× smaller per-passage KV cache than `125m`).
+### 2.3 Diagnosing & Curing the Looped Repetition Attractor (4-Way 300M-Token Ablation)
+
+Inspecting raw generated text from our initial `25m-looped14` (`65.0%` greedy rep) and `45m-looped14` (`51.7%` greedy rep) runs revealed severe single-token stutter (`"# # # ..."`, `"closed closed ..."`, `"initial initial ..."`), even though global `grad_norm` stayed calm (`~0.13`) and validation BPB improved.
+
+**Root-Cause Diagnosis (Two Coupled Bugs):**
+1. **Scale-Invariance Gradient Paradox in Muon:** Pairing `muon_lr=0.02` with Moonlight's `0.2 * sqrt(max(m, n))` multiplier (instead of Keller Jordan's `sqrt(max(1, m / n))`) + weak Muon weight decay (`wd * 0.2`) inflated 2D weights to `||W||_F ≈ 600` (`wRMS ≈ 0.65`) and blew up residual norms to `||x|| ≈ 25,000–75,000` (`actRMS ≈ 1,500–2,700`). Because `Pre-RMSNorm` shrinks gradients as `1 / ||W||`, global `grad_norm` looked *calmer* while weights exploded.
+2. **BF16 Underflow of `loop_emb`:** Adding a `~1.3`-norm `loop_emb` onto a `25,000`-norm residual stream (`ratio = 0.00006 < bf16 eps = 0.0078`) rounded `loop_emb` to **exact zero** in BFloat16 — leaving shared blocks completely blind to iteration index and amplifying copy attractors.
+
+**Fixes Implemented & 4-Vital Early Warning Monitor (`f9bf44b`):**
+- Corrected Muon aspect scaling to `sqrt(max(1, rows / cols))` with full `weight_decay`.
+- Added scale-safe `loop_mode: rms_add` and an **Outer Gated Depth-RNN + Prelude Input Re-Injection** (`loop_mode: gru`: `s ← (1 - z)·s + z·Core(s_norm + W_in·silu([s_norm; e_0]) + loop_emb[k])`).
+- Added live health vitals (`max_w_rms`, `max_layer_gn`, `act_rms`, `max_logit`, `rep4_t0`, `rep4_t07`, `loop_cos`, `loop_gate_mean`) to [`trainer.py`](../src/coregrad/train/trainer.py) and [`monitor.py`](../src/coregrad/train/monitor.py).
+
+Controlled 4-way comparison at **300M tokens** (`seed=1337`, identical data stream & fixed Muon):
+
+| Metric (`300M` tokens) | Run A: `25m-dense` (`25.2M`, 12d) | Run B: `25m-looped14-clean` (`26.1M`, `1+4×3+1`, `rms_add`) | Run C: `25m-looped14-gru` (`27.1M`, `1+4×3+1`, `gru`) | **Run D: `32m-looped16-gru` (`33.0M`, `2+4×3+2`, `gru`)** |
+|---|---:|---:|---:|---:|
+| **Val Mean BPB** | `1.0093` | `0.9904` (`−0.0189`) | `0.9726` (`−0.0367`) | **`0.9634` (`−0.0459`)** |
+| `cosmo` / `code` BPB | `0.811` / `0.815` | `0.793` / `0.796` | `0.778` / `0.772` | **`0.768` / `0.767`** |
+| `finemath` / `edu-en` BPB | `1.173` / `1.239` | `1.152` / `1.220` | `1.133` / `1.207` | **`1.121` / `1.197`** |
+| **Grammar / 4-Way** | `68.8%` / `41.7%` | `87.5%` / **`45.8%`** | `84.4%` / `37.5%` | **`87.5%`** / `37.5%` |
+| **Max Weight RMS (`wRMS`)** | `0.112` | `0.095` | `0.082` | **`0.078`** *(healthy!)* |
+| **Residual `actRMS` / `maxLogit`** | `8.3` / `21.3` | `9.8` / `20.8` | **`5.8`** / `20.8` | **`6.6`** / `21.8` |
+| **Loop Cos Sim (`L1 → L2`)** | — | `0.934` | **`0.881`** | **`0.886`** |
+| **GRU Gate Mean** | — | — | `0.75` | `0.73` |
+| **Sampled `T=0.7` 4-gram Rep.** | `36.5%` | `22.4%` | `24.0%` | **`18.0%` (½ of dense!)** |
+| **Single-token stutter?** | Mild | **None** | **None** | **None** |
+| **Train tok/s · VRAM** | `188.4k` · `4.6 GB` | `114.3k` · `6.3 GB` | `106.0k` · `6.9 GB` | `94.7k` · `7.6 GB` |
+
+**Verdict:** Fixed Muon scaling + `rms_add` completely eliminated the `~2,700` activation explosion and single-token stutter. Adding the **Outer GRU Depth-RNN + Prelude Re-Injection** doubled the BPB gain (`−0.0189 → −0.0367` BPB) and broke inter-loop collapse (`loop_cos: 0.934 → 0.881`), while expanding the interface to **Huginn-style `2` prelude + `4×3` + `2` coda (`33.0M`)** pushed BPB to **`0.9634`** (`−0.0459` vs dense) and halved sampled `T=0.7` repetition (`36.5% → 18.0%`) — establishing **`2+4×3+2` + Outer GRU Depth-RNN + Fixed Muon** as our new standard architecture going into Phase 5.
+
+### 2.4 Remaining Optional Phase 4A Ablations
+- Cognitive Core Purity A/B (`25m` pretrained with `0%` web/encyclopedic `edu-en` vs. `45% edu-en`).
+- GQA KV-Bank scaling check on `45m` / `32m-looped16-gru`.
 

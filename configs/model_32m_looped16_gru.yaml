@@ -1,0 +1,19 @@
+# Diagnostic Model D: 33M Huginn-style 2 prelude + 4 core x 3 loops + 2 coda = 16 eff layers (Outer GRU)
+# Identical block width (d=512, d_ff=1408) to 25m-looped14-gru; isolates adding +1 prelude and +1 coda layer
+name: coregrad-32m-looped16-gru
+vocab_size: 16384
+max_seq_len: 2048
+n_layer: 8
+d_model: 512
+n_heads: 8
+n_kv_heads: 4
+d_ff: 1408
+rope_theta: 10000.0
+norm_eps: 1.0e-6
+qk_norm: true
+tie_embeddings: true
+n_loops: 3
+loop_start: 2
+loop_end: 6
+loop_step_embed: true
+loop_mode: gru

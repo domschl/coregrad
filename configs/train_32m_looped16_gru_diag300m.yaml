@@ -1,0 +1,30 @@
+# Fast 300M-token Attractor Diagnostic — Run D: 33M looped-16 (2+4x3+2) with fixed Muon + Outer GRU Depth-RNN
+run_name: diag300m_32m_looped16_gru
+model_config: configs/model_32m_looped16_gru.yaml
+optimizer: muon
+total_tokens: 300000000
+seq_len: 2048
+micro_batch: 8
+grad_accum: 8
+peak_lr: 8.0e-4
+min_lr: 8.0e-5
+muon_lr: 0.02
+weight_decay: 0.1
+grad_clip: 1.0
+warmup_fraction: 0.04
+decay_fraction: 0.20
+decay_style: cosine
+compile_model: true
+activation_checkpointing: false
+seed: 1337
+log_interval: 20
+eval_interval: 300
+eval_val_batches: 16
+sample_count: 6
+sample_max_tokens: 112
+save_interval: 2500
+mixture:
+  edu-en: 0.45
+  cosmo: 0.25
+  code-starcoder: 0.17
+  finemath: 0.13
