@@ -30,7 +30,6 @@ from coregrad.synthetic.logic_gen import VerifiableLogicTask, generate_logic_tas
 from coregrad.tokenizer import CoreGradTokenizer
 from coregrad.tokenizer.special_tokens import (
     ASSISTANT_END,
-    ASSISTANT_START,
     SYSTEM_END,
     SYSTEM_START,
     USER_END,
@@ -85,8 +84,11 @@ def _eval_depth_tasks(
 
     hits = 0
     by_cat: dict[str, list[int]] = {}
+    sample_out: str | None = None
     for task in tasks:
-        prompt = f"{SYSTEM_START}{DEFAULT_SYSTEM_PROMPT}{SYSTEM_END}{USER_START}{task.question}{USER_END}{ASSISTANT_START}"
+        # Match encode_masked_trajectory exactly: end prompt at <|user|>...<|/user|> so the model
+        # emits <|think|>...<|/think|><|assistant|>... in cot mode or <|assistant|>... in direct mode.
+        prompt = f"{SYSTEM_START}{DEFAULT_SYSTEM_PROMPT}{SYSTEM_END}{USER_START}{task.question}{USER_END}"
         ids = tokenizer.encode(prompt, add_bos=True, add_eos=False)
         x = torch.tensor([ids], dtype=torch.long, device=device)
         gen: list[int] = []
@@ -98,7 +100,10 @@ def _eval_depth_tasks(
                 break
             gen.append(nxt)
             x = torch.cat([x, torch.tensor([[nxt]], dtype=torch.long, device=device)], dim=1)
-        pred = _parse_logic_label(tokenizer.decode(gen, skip_special_tokens=False))
+        raw_gen = tokenizer.decode(gen, skip_special_tokens=False)
+        if sample_out is None:
+            sample_out = raw_gen
+        pred = _parse_logic_label(raw_gen)
         ok = int(pred == task.expected_answer)
         hits += ok
         by_cat.setdefault(task.category, []).append(ok)
@@ -110,6 +115,7 @@ def _eval_depth_tasks(
         "by_category": {
             cat: round(sum(vals) / max(len(vals), 1), 4) for cat, vals in sorted(by_cat.items())
         },
+        "sample_output": (sample_out or "")[:400],
     }
 
 
@@ -150,7 +156,7 @@ def main() -> int:
     train_tasks = generate_logic_tasks(
         args.n_train, depths=train_depths, split="train", seed=2026, n_distractors=3, cot=use_cot
     )
-    encoded_train = [encode_masked_trajectory(tokenizer, t.turns) for t in train_tasks]
+    encoded_train = [encode_masked_trajectory(t.turns, tokenizer) for t in train_tasks]
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.95), weight_decay=0.05)
     amp = device.type == "cuda"

@@ -132,7 +132,7 @@ def _build_single_task(
     entity = rng.choice(entities)
 
     # Reserve enough unique predicates for main chain + optional branch + distractors
-    need = depth + 3 + max(2, n_distractors + 1)
+    need = depth + 3 + max(4, n_distractors + 3)
     if need > len(preds):
         # Extend dynamically with deterministic suffixes if very large depth requested
         pool = list(preds) + [f"{p}{k}" for k in range(2, 6) for p in preds]
@@ -221,13 +221,19 @@ def _build_single_task(
     else:
         raise ValueError(f"Unsupported category: {category!r}")
 
-    # Add acyclic distractor rules using strictly disjoint predicates so target truth never changes
+    # Add acyclic distractor rules using strictly disjoint predicates so target truth never changes.
+    # Always include at least one distractor negation rule and one distractor conjunctive rule so
+    # surface keywords ("No ...", "both ... and ...") carry zero shortcut information.
     dist_pool = chosen[used_end:]
-    for j in range(min(n_distractors, len(dist_pool) - 1)):
+    if len(dist_pool) >= 3:
+        neg_rules.append((dist_pool[0], dist_pool[1]))
+        conj_rules.append((dist_pool[0], dist_pool[1], dist_pool[2]))
+    for j in range(min(n_distractors, max(0, len(dist_pool) - 1))):
         if j % 3 == 0:
             # Side branch off an intermediate chain node into an unused distractor node
             anchor = chosen[rng.randint(0, depth - 1)]
-            unary_rules.append((anchor, dist_pool[j]))
+            target_d = dist_pool[min(j + 2, len(dist_pool) - 1)]
+            unary_rules.append((anchor, target_d))
         else:
             unary_rules.append((dist_pool[j], dist_pool[j + 1]))
 
