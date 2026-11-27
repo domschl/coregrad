@@ -43,6 +43,7 @@ class ModelConfig:
     loop_start: int = 0
     loop_end: int | None = None
     loop_step_embed: bool = False
+    loop_mode: str = "add"  # "add" (legacy) | "rms_add" (scale-safe) | "gru" (outer gated depth-RNN + prelude re-injection)
 
     def __post_init__(self) -> None:
         if self.d_model % self.n_heads != 0:
@@ -53,6 +54,8 @@ class ModelConfig:
             )
         if self.n_loops < 1:
             raise ValueError(f"n_loops must be >= 1, got {self.n_loops}")
+        if self.loop_mode not in ("add", "rms_add", "gru"):
+            raise ValueError(f"Unsupported loop_mode: {self.loop_mode!r}")
         end = self.n_layer if self.loop_end is None else self.loop_end
         if not (0 <= self.loop_start < end <= self.n_layer):
             raise ValueError(
@@ -188,6 +191,12 @@ class CoreGradLM(nn.Module):
             if (cfg.n_loops > 1 and cfg.loop_step_embed)
             else None
         )
+        self.use_gru_loop = cfg.n_loops > 1 and cfg.loop_mode == "gru"
+        if self.use_gru_loop:
+            self.loop_e0_norm = RMSNorm(cfg.d_model, eps=cfg.norm_eps)
+            self.loop_s_norm = RMSNorm(cfg.d_model, eps=cfg.norm_eps)
+            self.loop_in_proj = nn.Linear(cfg.d_model * 2, cfg.d_model, bias=False)
+            self.loop_gate_proj = nn.Linear(cfg.d_model * 2, cfg.d_model, bias=True)
 
         if cfg.tie_embeddings:
             self.lm_head.weight = self.tok_emb.weight
@@ -197,6 +206,10 @@ class CoreGradLM(nn.Module):
         self.register_buffer("rope_sin", sin, persistent=False)
 
         self.apply(self._init_weights)
+        if self.use_gru_loop:
+            # Start gate moderately open (~0.62) so depth passes learn cleanly from step 0
+            nn.init.constant_(self.loop_gate_proj.bias, 0.5)
+            nn.init.normal_(self.loop_in_proj.weight, mean=0.0, std=0.02 / math.sqrt(2.0 * cfg.n_loops))
         # Scale residual output projections by effective execution depth
         residual_std = 0.02 / math.sqrt(2.0 * cfg.effective_layers)
         for block in self.blocks:
@@ -265,11 +278,28 @@ class CoreGradLM(nn.Module):
             end = self.cfg.resolved_loop_end
             for i in range(start):
                 x = self._run_block(self.blocks[i], x, cos, sin)
-            for loop_idx in range(self.cfg.n_loops):
-                if self.loop_emb is not None:
-                    x = x + self.loop_emb[loop_idx]
-                for i in range(start, end):
-                    x = self._run_block(self.blocks[i], x, cos, sin)
+            if self.use_gru_loop:
+                e0 = self.loop_e0_norm(x)
+                for loop_idx in range(self.cfg.n_loops):
+                    s_norm = self.loop_s_norm(x)
+                    cat_in = torch.cat((s_norm, e0), dim=-1)
+                    z = torch.sigmoid(self.loop_gate_proj(cat_in))
+                    h = s_norm + self.loop_in_proj(F.silu(cat_in))
+                    if self.loop_emb is not None:
+                        h = h + self.loop_emb[loop_idx]
+                    for i in range(start, end):
+                        h = self._run_block(self.blocks[i], h, cos, sin)
+                    x = (1.0 - z) * x + z * h
+            else:
+                for loop_idx in range(self.cfg.n_loops):
+                    if self.loop_emb is not None:
+                        if self.cfg.loop_mode == "rms_add":
+                            x_rms = x.detach().pow(2).mean(dim=-1, keepdim=True).sqrt().clamp_min(1e-3)
+                            x = x + self.loop_emb[loop_idx] * x_rms
+                        else:
+                            x = x + self.loop_emb[loop_idx]
+                    for i in range(start, end):
+                        x = self._run_block(self.blocks[i], x, cos, sin)
             for i in range(end, self.cfg.n_layer):
                 x = self._run_block(self.blocks[i], x, cos, sin)
 
@@ -282,6 +312,84 @@ class CoreGradLM(nn.Module):
                 logits.reshape(-1, logits.size(-1)), targets.reshape(-1), ignore_index=-100
             )
         return logits, loss
+
+    @torch.no_grad()
+    def compute_health_vitals(self, idx: torch.Tensor) -> dict[str, float]:
+        """Lightweight early-warning diagnostics for weight/activation scale and loop health."""
+        was_training = self.training
+        self.eval()
+        max_w_rms = 0.0
+        for name, p in self.named_parameters():
+            if p.ndim >= 2 and "tok_emb" not in name and "lm_head" not in name:
+                rms = float(p.detach().float().pow(2).mean().sqrt().item())
+                max_w_rms = max(max_w_rms, rms)
+
+        _, seq_len = idx.shape
+        x = self.tok_emb(idx)
+        cos = self.rope_cos[:, :, :seq_len, :]
+        sin = self.rope_sin[:, :, :seq_len, :]
+
+        loop_cos: float | None = None
+        loop_gate_mean: float | None = None
+        if self.cfg.n_loops == 1:
+            for block in self.blocks:
+                x = block(x, cos, sin)
+        else:
+            start = self.cfg.loop_start
+            end = self.cfg.resolved_loop_end
+            for i in range(start):
+                x = self.blocks[i](x, cos, sin)
+            prev = x.float()
+            gate_vals: list[float] = []
+            if self.use_gru_loop:
+                e0 = self.loop_e0_norm(x)
+                for loop_idx in range(self.cfg.n_loops):
+                    s_norm = self.loop_s_norm(x)
+                    cat_in = torch.cat((s_norm, e0), dim=-1)
+                    z = torch.sigmoid(self.loop_gate_proj(cat_in))
+                    gate_vals.append(float(z.float().mean().item()))
+                    h = s_norm + self.loop_in_proj(F.silu(cat_in))
+                    if self.loop_emb is not None:
+                        h = h + self.loop_emb[loop_idx]
+                    for i in range(start, end):
+                        h = self.blocks[i](h, cos, sin)
+                    x = (1.0 - z) * x + z * h
+                    cur = x.float()
+                    loop_cos = float(F.cosine_similarity(prev, cur, dim=-1).mean().item())
+                    prev = cur
+                loop_gate_mean = sum(gate_vals) / max(len(gate_vals), 1)
+            else:
+                for loop_idx in range(self.cfg.n_loops):
+                    if self.loop_emb is not None:
+                        if self.cfg.loop_mode == "rms_add":
+                            x_rms = x.pow(2).mean(dim=-1, keepdim=True).sqrt().clamp_min(1e-3)
+                            x = x + self.loop_emb[loop_idx] * x_rms
+                        else:
+                            x = x + self.loop_emb[loop_idx]
+                    for i in range(start, end):
+                        x = self.blocks[i](x, cos, sin)
+                    cur = x.float()
+                    loop_cos = float(F.cosine_similarity(prev, cur, dim=-1).mean().item())
+                    prev = cur
+            for i in range(end, self.cfg.n_layer):
+                x = self.blocks[i](x, cos, sin)
+
+        act_rms = float(x.float().pow(2).mean().sqrt().item())
+        logits = self.lm_head(self.final_norm(x)).float()
+        max_logit = float(logits.abs().max().item())
+
+        if was_training:
+            self.train()
+        out: dict[str, float] = {
+            "max_w_rms": round(max_w_rms, 5),
+            "act_rms": round(act_rms, 3),
+            "max_logit": round(max_logit, 2),
+        }
+        if loop_cos is not None:
+            out["loop_cos"] = round(loop_cos, 4)
+        if loop_gate_mean is not None:
+            out["loop_gate_mean"] = round(loop_gate_mean, 4)
+        return out
 
     @torch.no_grad()
     def generate(

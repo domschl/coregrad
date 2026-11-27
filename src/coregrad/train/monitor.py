@@ -55,21 +55,25 @@ class RunLogger:
         tok_per_sec: float,
         vram_gb: float,
         elapsed_s: float,
+        max_layer_gn: float | None = None,
+        max_w_rms: float | None = None,
     ) -> None:
-        self._append(
-            self.metrics_path,
-            {
-                "t": round(time.time(), 2),
-                "step": step,
-                "tokens": tokens_seen,
-                "loss": round(train_loss, 5),
-                "lr": lr,
-                "grad_norm": round(grad_norm, 4),
-                "tok_s": round(tok_per_sec, 1),
-                "vram_gb": round(vram_gb, 3),
-                "elapsed_s": round(elapsed_s, 1),
-            },
-        )
+        rec: dict[str, Any] = {
+            "t": round(time.time(), 2),
+            "step": step,
+            "tokens": tokens_seen,
+            "loss": round(train_loss, 5),
+            "lr": lr,
+            "grad_norm": round(grad_norm, 4),
+            "tok_s": round(tok_per_sec, 1),
+            "vram_gb": round(vram_gb, 3),
+            "elapsed_s": round(elapsed_s, 1),
+        }
+        if max_layer_gn is not None:
+            rec["max_layer_gn"] = round(max_layer_gn, 4)
+        if max_w_rms is not None:
+            rec["max_w_rms"] = round(max_w_rms, 5)
+        self._append(self.metrics_path, rec)
 
     def log_eval(
         self,
@@ -80,6 +84,7 @@ class RunLogger:
         domain_bpb: dict[str, float],
         grammar_acc: float | None = None,
         completion_acc: float | None = None,
+        vitals: dict[str, float] | None = None,
     ) -> None:
         rec: dict[str, Any] = {
             "t": round(time.time(), 2),
@@ -92,6 +97,9 @@ class RunLogger:
             rec["grammar_acc"] = round(grammar_acc, 4)
         if completion_acc is not None:
             rec["completion_acc"] = round(completion_acc, 4)
+        if vitals:
+            for k, v in vitals.items():
+                rec[k] = v
         self._append(self.evals_path, rec)
 
     def log_samples(
@@ -232,9 +240,19 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <div class="legend" id="probeLegend"></div>
   </div>
   <div class="card">
-    <h2>Learning Rate &amp; Gradient Norm</h2>
+    <h2>Learning Rate &amp; Gradient Norms (Global + Max Layer)</h2>
     <svg id="lrChart" viewBox="0 0 600 240"></svg>
     <div class="legend" id="lrLegend"></div>
+  </div>
+  <div class="card">
+    <h2>Health Vitals (Early Warning: Weight RMS, Act RMS, Max Logit)</h2>
+    <svg id="vitalsChart" viewBox="0 0 600 240"></svg>
+    <div class="legend" id="vitalsLegend"></div>
+  </div>
+  <div class="card">
+    <h2>Repetition &amp; Loop Health (%)</h2>
+    <svg id="repChart" viewBox="0 0 600 240"></svg>
+    <div class="legend" id="repLegend"></div>
   </div>
 </section>
 
@@ -365,6 +383,14 @@ function renderRun(payload) {
     etaStr = remH >= 1 ? `${remH.toFixed(1)} h` : `${(remH*60).toFixed(0)} m`;
   }
 
+  const wRms = lastM && lastM.max_w_rms !== undefined ? lastM.max_w_rms : (lastE ? lastE.max_w_rms : undefined);
+  const actRms = lastE ? lastE.act_rms : undefined;
+  const rep0 = lastE ? lastE.rep4_t0 : undefined;
+  const healthStr = (wRms !== undefined || actRms !== undefined)
+    ? `wRMS ${wRms !== undefined ? wRms.toFixed(3) : "—"} · act ${actRms !== undefined ? actRms.toFixed(1) : "—"}`
+    : "—";
+  const healthWarn = (wRms !== undefined && wRms > 0.5) || (actRms !== undefined && actRms > 100);
+
   const kpis = [
     ["Step", lastM ? lastM.step.toLocaleString() : "—"],
     ["Tokens", lastM ? `${(lastM.tokens/1e6).toFixed(2)}M` + (targetTok ? ` / ${(targetTok/1e6).toFixed(0)}M` : "") : "—"],
@@ -374,10 +400,12 @@ function renderRun(payload) {
     ["Peak VRAM", lastM ? `${lastM.vram_gb.toFixed(2)} GB` : "—"],
     ["Grammar / 4-Way", lastE && lastE.grammar_acc !== undefined
       ? `${(lastE.grammar_acc*100).toFixed(0)}% / ${((lastE.completion_acc||0)*100).toFixed(0)}%` : "—"],
+    ["Health (wRMS · act)", healthStr, healthWarn ? "#f85149" : "#3fb950"],
+    ["Greedy Rep4 (T=0)", rep0 !== undefined ? `${(rep0*100).toFixed(1)}%` : "—", rep0 !== undefined && rep0 > 0.35 ? "#d29922" : undefined],
     ["Est. Remaining", etaStr],
   ];
-  document.getElementById("kpiRow").innerHTML = kpis.map(([l, v]) =>
-    `<div class="kpi"><div class="label">${l}</div><div class="val">${v}</div></div>`
+  document.getElementById("kpiRow").innerHTML = kpis.map(([l, v, col]) =>
+    `<div class="kpi"><div class="label">${l}</div><div class="val" style="${col ? `color:${col}` : ""}">${v}</div></div>`
   ).join("");
 
   const logY = document.getElementById("logScale").checked;
@@ -409,8 +437,22 @@ function renderRun(payload) {
 
   plotSVG("lrChart", "lrLegend", [
     { label: "LR (×1e4)", color: "#d29922", pts: metrics.map(m => [m.tokens/1e6, m.lr * 1e4]) },
-    { label: "Grad Norm", color: "#f85149", opacity: 0.65, width: 1.5, pts: metrics.map(m => [m.tokens/1e6, m.grad_norm]) },
+    { label: "Global Grad Norm", color: "#f85149", opacity: 0.65, width: 1.5, pts: metrics.map(m => [m.tokens/1e6, m.grad_norm]) },
+    { label: "Max Layer Grad Norm", color: "#bc8cff", opacity: 0.85, width: 1.7, pts: metrics.filter(m => m.max_layer_gn !== undefined).map(m => [m.tokens/1e6, m.max_layer_gn]) },
   ]);
+
+  plotSVG("vitalsChart", "vitalsLegend", [
+    { label: "Max Weight RMS (×100)", color: "#39c5cf", pts: metrics.filter(m => m.max_w_rms !== undefined).map(m => [m.tokens/1e6, m.max_w_rms * 100]) },
+    { label: "Act RMS", color: "#f85149", pts: evals.filter(e => e.act_rms !== undefined).map(e => [e.tokens/1e6, e.act_rms]) },
+    { label: "Max Logit", color: "#d29922", pts: evals.filter(e => e.max_logit !== undefined).map(e => [e.tokens/1e6, e.max_logit]) },
+  ], { logY });
+
+  plotSVG("repChart", "repLegend", [
+    { label: "Greedy T=0 Rep4 %", color: "#f85149", pts: evals.filter(e => e.rep4_t0 !== undefined).map(e => [e.tokens/1e6, e.rep4_t0 * 100]) },
+    { label: "Sampled T=0.7 Rep4 %", color: "#d29922", pts: evals.filter(e => e.rep4_t07 !== undefined).map(e => [e.tokens/1e6, e.rep4_t07 * 100]) },
+    { label: "Loop Cos Sim %", color: "#bc8cff", pts: evals.filter(e => e.loop_cos !== undefined).map(e => [e.tokens/1e6, e.loop_cos * 100]) },
+    { label: "GRU Gate Mean %", color: "#3fb950", pts: evals.filter(e => e.loop_gate_mean !== undefined).map(e => [e.tokens/1e6, e.loop_gate_mean * 100]) },
+  ], { minY: 0, maxY: 100 });
 
   renderSamples(payload);
   document.getElementById("statusPill").textContent =

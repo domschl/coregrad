@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import torch
@@ -73,8 +72,8 @@ class Muon(torch.optim.Optimizer):
                 buf.lerp_(g, 1.0 - beta)
                 update = g.lerp(buf, beta) if nesterov else buf
                 orth = zeropower_via_newtonschulz5(update, steps=ns_steps)
-                # Moonlight-style aspect-ratio RMS scaling for width-invariant LR
-                scale = 0.2 * math.sqrt(max(p.size(0), p.size(1)))
+                # Keller Jordan aspect-ratio scaling for semi-orthogonal NS updates (muon_lr ~ 0.02)
+                scale = max(1.0, p.size(0) / p.size(1)) ** 0.5
                 if wd != 0.0:
                     p.mul_(1.0 - lr * wd)
                 p.add_(orth, alpha=-lr * scale)
@@ -150,6 +149,6 @@ def build_optimizer(
     if optimizer_type == "adamw":
         return HybridOptimizer([adamw], [lr])
     if optimizer_type == "muon":
-        muon = Muon(muon_params, lr=muon_lr, momentum=0.95, weight_decay=weight_decay * 0.2)
+        muon = Muon(muon_params, lr=muon_lr, momentum=0.95, weight_decay=weight_decay)
         return HybridOptimizer([muon, adamw], [muon_lr, lr])
     raise ValueError(f"Unknown optimizer_type: {optimizer_type!r} (expected 'adamw' or 'muon')")

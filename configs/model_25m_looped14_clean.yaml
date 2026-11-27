@@ -1,0 +1,18 @@
+# Diagnostic Model B: 25M looped-14 with scale-safe rms_add loop_emb (no BF16 underflow)
+name: coregrad-25m-looped14-clean
+vocab_size: 16384
+max_seq_len: 2048
+n_layer: 6
+d_model: 512
+n_heads: 8
+n_kv_heads: 4
+d_ff: 1408
+rope_theta: 10000.0
+norm_eps: 1.0e-6
+qk_norm: true
+tie_embeddings: true
+n_loops: 3
+loop_start: 1
+loop_end: 5
+loop_step_embed: true
+loop_mode: rms_add

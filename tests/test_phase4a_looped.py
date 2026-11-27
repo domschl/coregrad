@@ -82,3 +82,38 @@ def test_looped_forward_backward_muon_and_kv_bank_identity() -> None:
         assert len(kv_bank) == 14
         kv_logits, _ = forward_with_kv_bank(model, q_ids, kv_bank=kv_bank)
     assert torch.allclose(full_logits[:, 10:, :], kv_logits, atol=1e-5)
+
+
+def test_gru_loop_and_rms_add_with_health_vitals() -> None:
+    torch.manual_seed(9)
+    for mode in ("rms_add", "gru"):
+        cfg = ModelConfig(
+            name=f"tiny-{mode}",
+            vocab_size=128,
+            max_seq_len=64,
+            n_layer=6,
+            d_model=64,
+            n_heads=4,
+            n_kv_heads=2,
+            d_ff=128,
+            n_loops=3,
+            loop_start=1,
+            loop_end=5,
+            loop_step_embed=True,
+            loop_mode=mode,
+        )
+        m = CoreGradLM(cfg)
+        x = torch.randint(0, 128, (2, 12))
+        y = torch.randint(0, 128, (2, 12))
+        _, loss = m(x, y)
+        assert loss is not None and torch.isfinite(loss)
+        loss.backward()
+        assert m.loop_emb is not None and m.loop_emb.grad is not None
+        if mode == "gru":
+            assert m.loop_gate_proj.weight.grad is not None
+            assert m.loop_in_proj.weight.grad is not None
+        vitals = m.compute_health_vitals(x[:1])
+        assert vitals["max_w_rms"] > 0.0 and vitals["act_rms"] > 0.0
+        assert "loop_cos" in vitals
+        if mode == "gru":
+            assert 0.0 < vitals["loop_gate_mean"] < 1.0

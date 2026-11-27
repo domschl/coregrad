@@ -210,15 +210,41 @@ def train_pretrain(
     amp_enabled = dev.type == "cuda"
     t_run_start = time.perf_counter()
 
+    def _mean_rep4(sample_list: list[dict[str, str]]) -> float:
+        rates: list[float] = []
+        for s in sample_list:
+            words = s.get("completion", "").lower().split()
+            if len(words) < 6:
+                rates.append(0.0)
+                continue
+            grams = [tuple(words[i : i + 4]) for i in range(len(words) - 3)]
+            rates.append(1.0 - len(set(grams)) / len(grams))
+        return round(sum(rates) / max(len(rates), 1), 4)
+
+    def _step_vitals() -> tuple[float, float]:
+        max_lgn = 0.0
+        max_w = 0.0
+        for name, p in model.named_parameters():
+            if p.grad is not None:
+                gn = float(p.grad.detach().float().norm().item())
+                max_lgn = max(max_lgn, gn)
+            if p.ndim >= 2 and "tok_emb" not in name and "lm_head" not in name:
+                wrms = float(p.detach().float().pow(2).mean().sqrt().item())
+                max_w = max(max_w, wrms)
+        return max_lgn, max_w
+
     def run_eval_and_samples(cur_step: int, cur_tokens: int) -> float:
         model.eval()
+        val_bsz = max(1, min(cfg.micro_batch, 8))
+        # Keep total evaluated validation tokens consistent across micro_batch=4 vs 8
+        val_batches = cfg.eval_val_batches * max(1, 8 // val_bsz)
         bpb_res = evaluate_validation_bpb(
             model,
             shards_root,
             device=dev,
             seq_len=min(cfg.seq_len, 1024),
-            batch_size=max(1, min(cfg.micro_batch, 8)),
-            max_batches_per_domain=cfg.eval_val_batches,
+            batch_size=val_bsz,
+            max_batches_per_domain=val_batches,
             use_bf16=amp_enabled,
         )
         summary = summarize_bpb(bpb_res)
@@ -235,6 +261,20 @@ def train_pretrain(
             top_k=40,
             limit=cfg.sample_count,
         )
+        greedy_samples = run_qualitative_suite(
+            model,
+            tokenizer,
+            device=dev,
+            max_new_tokens=min(cfg.sample_max_tokens, 80),
+            temperature=0.0,
+            top_k=None,
+            limit=min(cfg.sample_count, 4),
+        )
+        probe_x, _ = loader.next_batch(device=dev)
+        vitals = model.compute_health_vitals(probe_x[:1, :256])
+        vitals["rep4_t07"] = _mean_rep4(samples)
+        vitals["rep4_t0"] = _mean_rep4(greedy_samples)
+
         logger.log_eval(
             step=cur_step,
             tokens_seen=cur_tokens,
@@ -242,12 +282,20 @@ def train_pretrain(
             domain_bpb=dom_bpb,
             grammar_acc=float(gram["accuracy"]),
             completion_acc=float(comp["accuracy"]),  # type: ignore[arg-type]
+            vitals=vitals,
         )
         logger.log_samples(step=cur_step, tokens_seen=cur_tokens, samples=samples)
         dom_str = " ".join(f"{k}={v:.3f}" for k, v in sorted(dom_bpb.items()))
+        loop_str = (
+            f" | loop_cos={vitals['loop_cos']:.3f}" if "loop_cos" in vitals else ""
+        ) + (
+            f" gate={vitals['loop_gate_mean']:.2f}" if "loop_gate_mean" in vitals else ""
+        )
         print(
             f"[eval step={cur_step:,} tok={cur_tokens/1e6:.1f}M] mean_bpb={mean_bpb:.4f} "
-            f"({dom_str}) | grammar={gram['accuracy']*100:.1f}% | 4-way={float(comp['accuracy'])*100:.1f}%",  # type: ignore[arg-type]
+            f"({dom_str}) | grammar={gram['accuracy']*100:.1f}% | 4-way={float(comp['accuracy'])*100:.1f}% | "  # type: ignore[arg-type]
+            f"wRMS={vitals['max_w_rms']:.3f} actRMS={vitals['act_rms']:.1f} maxLogit={vitals['max_logit']:.1f} "
+            f"rep4(T0/T.7)={vitals['rep4_t0']*100:.0f}%/{vitals['rep4_t07']*100:.0f}%{loop_str}",
             flush=True,
         )
         model.train()
@@ -288,6 +336,12 @@ def train_pretrain(
             scaled_loss.backward()
             step_loss += float(scaled_loss.detach().item())
 
+        is_log_step = step % cfg.log_interval == 0 or step == total_steps
+        max_layer_gn: float | None = None
+        max_w_rms: float | None = None
+        if is_log_step:
+            max_layer_gn, max_w_rms = _step_vitals()
+
         grad_norm = float(torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip).item())
         optimizer.step()
 
@@ -296,7 +350,7 @@ def train_pretrain(
         loss_accum_log += step_loss
         steps_in_log += 1
 
-        if step % cfg.log_interval == 0 or step == total_steps:
+        if is_log_step:
             if dev.type == "cuda":
                 torch.cuda.synchronize(dev)
                 vram_gb = torch.cuda.max_memory_allocated(dev) / (1024**3)
@@ -317,11 +371,13 @@ def train_pretrain(
                 tok_per_sec=tok_s,
                 vram_gb=vram_gb,
                 elapsed_s=elapsed_s,
+                max_layer_gn=max_layer_gn,
+                max_w_rms=max_w_rms,
             )
             print(
                 f"step {step:6d}/{total_steps} | tok {tokens_seen/1e6:7.2f}M | "
-                f"loss {avg_loss:.4f} | lr {lr:.2e} | gn {grad_norm:.2f} | "
-                f"{tok_s:8,.0f} tok/s | vram {vram_gb:.2f}GB",
+                f"loss {avg_loss:.4f} | lr {lr:.2e} | gn {grad_norm:.2f} (max {max_layer_gn or 0.0:.2f}) | "
+                f"wRMS {max_w_rms or 0.0:.3f} | {tok_s:8,.0f} tok/s | vram {vram_gb:.2f}GB",
                 flush=True,
             )
             t_window = now
