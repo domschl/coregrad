@@ -33,6 +33,12 @@ def test_25m_configs_are_iso_parameter_and_valid() -> None:
     # Looped12 and Looped14 share exact same 6 unique blocks (differ only by 512 floats in loop_emb)
     assert abs(p_l14 - p_l12) == 512
 
+    cfg_45l14 = ModelConfig.from_yaml(ROOT / "configs" / "model_45m_looped14.yaml")
+    assert cfg_45l14.effective_layers == 14
+    with torch.device("meta"):
+        p_45l14 = CoreGradLM(cfg_45l14).num_parameters()
+    assert 44_000_000 <= p_45l14 <= 46_000_000
+
 
 def test_looped_forward_backward_muon_and_kv_bank_identity() -> None:
     torch.manual_seed(7)
