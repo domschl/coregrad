@@ -12,8 +12,16 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
+from coregrad.synthetic.logic_gen import _OPEN_TRAIN_PREDS
 from coregrad.tools.dsl import safe_dsl
 from coregrad.tools.protocol import DEFAULT_SYSTEM_PROMPT, Turn, format_tool_call
+
+_REAL_NOUNS = (
+    "glimmer", "vortex", "beacon", "prism", "cipher", "nebula", "quartz", "helix",
+    "vector", "lattice", "spire", "lantern", "falcon", "cobalt", "matrix", "signal",
+    "anchor", "compass", "turbine", "crystal", "harbor", "ridge", "canyon", "delta",
+    "summit", "tensor", "kernel", "module", "circuit", "reactor", "sensor", "widget",
+)
 
 
 @dataclass(frozen=True)
@@ -27,60 +35,56 @@ class VerifiableDSLTask:
 
 
 def _make_logic_dsl(rng: random.Random, idx: int) -> VerifiableDSLTask:
-    ent = rng.choice(["Ada", "Bram", "Kora", "Tavin", "Soren", "Lyra"])
-    syms = ["A", "B", "C", "D", "E", "F"]
-    words = rng.sample(
-        ["glimmer", "vortex", "beacon", "prism", "cipher", "nebula", "quartz", "helix", "vector", "lattice"],
-        6,
-    )
-    depth = rng.randint(3, 5)
+    ent = rng.choice(["Ada", "Bram", "Kora", "Tavin", "Soren", "Lyra", "Miren", "Dalen"])
+    depth = rng.randint(2, 6)
     mode = rng.choice(["pos", "neg", "unk", "conj"])
-    binds = [f"{syms[i]}={words[i]}" for i in range(depth + 1)]
-    clauses: list[str] = [f"x:{syms[0]}"]
-    en_lines: list[str] = [f"{ent} is a {words[0]}."]
+    # Mix real nouns and open-vocab pseudowords so the model learns general verbatim copying
+    pool = _REAL_NOUNS if rng.random() < 0.35 else _OPEN_TRAIN_PREDS
+    words = rng.sample(pool, depth + 3)
+
+    # Pair each English premise with its BPE-aligned DSL clause so the model translates left-to-right (O(1) lookahead)
+    pairs: list[tuple[str, str]] = [(f"{ent} is a {words[0]}.", f"x : {words[0]}")]
 
     if mode == "pos":
         for i in range(depth):
-            clauses.append(f"{syms[i]}->{syms[i + 1]}")
-            en_lines.append(f"Every {words[i]} is a {words[i + 1]}.")
+            pairs.append((f"Every {words[i]} is a {words[i + 1]}.", f"{words[i]} -> {words[i + 1]}"))
     elif mode == "neg":
         for i in range(depth - 1):
-            clauses.append(f"{syms[i]}->{syms[i + 1]}")
-            en_lines.append(f"Every {words[i]} is a {words[i + 1]}.")
-        clauses.append(f"{syms[depth - 1]}-/>{syms[depth]}")
-        en_lines.append(f"No {words[depth - 1]} is a {words[depth]}.")
+            pairs.append((f"Every {words[i]} is a {words[i + 1]}.", f"{words[i]} -> {words[i + 1]}"))
+        pairs.append((f"No {words[depth - 1]} is a {words[depth]}.", f"{words[depth - 1]} -/> {words[depth]}"))
     elif mode == "unk":
         brk = rng.randint(1, depth - 1)
         for i in range(depth):
             if i == brk:
-                clauses.append(f"{syms[i + 1]}->{syms[i]}")
-                en_lines.append(f"Every {words[i + 1]} is a {words[i]}.")
+                pairs.append((f"Every {words[i + 1]} is a {words[i]}.", f"{words[i + 1]} -> {words[i]}"))
             else:
-                clauses.append(f"{syms[i]}->{syms[i + 1]}")
-                en_lines.append(f"Every {words[i]} is a {words[i + 1]}.")
+                pairs.append((f"Every {words[i]} is a {words[i + 1]}.", f"{words[i]} -> {words[i + 1]}"))
     else:  # conj
-        extra_w = words[depth + 1] if depth + 1 < len(words) else "spire"
-        binds.append(f"Z={extra_w}")
-        clauses.append("x:Z")
-        en_lines.append(f"{ent} is a {extra_w}.")
+        extra_w = words[depth + 1]
+        pairs.append((f"{ent} is a {extra_w}.", f"x : {extra_w}"))
         join = max(1, depth // 2)
         for i in range(depth):
             if i == join:
-                clauses.append(f"{syms[i]}&Z->{syms[i + 1]}")
-                en_lines.append(f"Anything that is both a {words[i]} and a {extra_w} is a {words[i + 1]}.")
+                pairs.append(
+                    (
+                        f"Anything that is both a {words[i]} and a {extra_w} is a {words[i + 1]}.",
+                        f"{words[i]} & {extra_w} -> {words[i + 1]}",
+                    )
+                )
             else:
-                clauses.append(f"{syms[i]}->{syms[i + 1]}")
-                en_lines.append(f"Every {words[i]} is a {words[i + 1]}.")
+                pairs.append((f"Every {words[i]} is a {words[i + 1]}.", f"{words[i]} -> {words[i + 1]}"))
 
-    rng.shuffle(en_lines)
+    rng.shuffle(pairs)
+    en_lines = [p[0] for p in pairs]
+    clauses = [p[1] for p in pairs]
     target_w = words[depth]
-    expr = f"prove([{', '.join(clauses)}], x:{syms[depth]})"
+    expr = f"prove([ {', '.join(clauses)} ], x : {target_w})"
     ans = safe_dsl(expr)
     q = (
         f"Rules: {' '.join(en_lines)}\n"
         f"Based strictly on these rules, is {ent} a {target_w}? Answer True, False, or Unknown."
     )
-    think = f"bind: x={ent}; {'; '.join(binds)}\nFormalize and verify via prove()."
+    think = f"Translate rules left-to-right for x = {ent} and verify goal x : {target_w} via prove()."
     turns = [
         Turn("system", DEFAULT_SYSTEM_PROMPT),
         Turn("user", q),

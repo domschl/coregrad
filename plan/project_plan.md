@@ -2,15 +2,15 @@
 
 > **Goal:** Build, train, and systematically essentialize a compact **cognitive core** LLM from scratch on a single consumer GPU (RTX 4070 Ti, 12 GB VRAM) — combining the clean, readable engineering ethos of `micrograd` / `nanoGPT` with the thesis that a tiny model can master **English language, reasoning, and tool use** while outsourcing **world and personal knowledge** to external local retrieval.
 >
-> **Open-First Design:** Phases 0–4 use **exclusively public, openly licensed datasets**. Every script, tokenizer, benchmark, training recipe, and resulting model checkpoint can be published and reproduced without restriction. Personal/private libraries work out of the box at **inference time** via the local retrieval tools (no retraining required), with an optional plug-in path for private local training later.
+> **Open-First Design (MIT License):** Phases 0–4 use **exclusively public, openly licensed datasets**. Every script, tokenizer, benchmark, training recipe, and resulting model checkpoint can be published and reproduced without restriction. Personal/private libraries work out of the box at **inference time** via the local retrieval tools (no retraining required), with an optional plug-in path for private local training later.
 
 ---
 
 ## 1. Guiding Principles & Scope
 
 1. **Cognitive Core over World Encyclopedia:** A 10M–150M parameter model cannot and should not memorize an encyclopedia. Its limited parameter budget should be dedicated to linguistic coherence, problem decomposition, logical control flow, knowing when it lacks information, calling tools accurately, and synthesizing cited answers from retrieved context.
-2. **100% Public & Reproducible Core (Phases 0–4):** All pretraining, mid-training, SFT, synthetic generation, and evaluation artifacts are built strictly from public open datasets so the entire repository and trained weights can be shared openly.
-3. **English-First:** Focus exclusively on English (plus code and structured tool syntax) through Gates 1–3 to maximize reasoning and tool-use capability per parameter.
+2. **100% Public & Reproducible Core (Phases 0–5):** All pretraining, mid-training, SFT, synthetic generation, and evaluation artifacts are built strictly from public open datasets so the entire repository and trained weights can be shared openly.
+3. **English-First, Multilingual-Ready:** Focus exclusively on English (plus code and structured tool/DSL syntax) through Phases 0–5.2 to maximize reasoning and tool-use capability per parameter, then optionally scale the winning recipe to a Multilingual (`EN + DE + FR + ES`, `32k` BPE) flagship core paired with multilingual `EmbeddingGemma 2` in Phase 5.3.
 4. **Staged Value Delivery:** Every phase ends with a concrete, testable milestone. Even partial completion produces a standalone, useful, publishable artifact (a modern compact PyTorch trainer at Gate 1; a working local-research agent at Gate 2; empirical minimal-architecture research at Gate 3).
 5. **Measure Before Scaling:** Build the automated evaluation harness and hardware micro-benchmark *before* launching multi-day runs. Use a Warmup–Stable–Decay (WSD) learning-rate schedule so runs are checkpointable, branchable, and never wasted.
 
@@ -226,10 +226,10 @@ Author X published Book Y in 1962 <|cite|>d412<|/cite|>, which was 17 years befo
 4. **Distillation & Data-Efficiency Ablations:** Distill logits/trajectories from the Gate 2 125M core into 15M–30M students; measure minimum token budgets needed to cross Gate 2 thresholds.
 5. **Cognitive Core Purity Experiment:** Controlled A/B test at 30M–45M scale comparing pretraining *with* vs. *without* encyclopedic Wikipedia text — directly testing whether stripping world-fact memorization improves externalized tool-use and reasoning accuracy per parameter.
 
-#### Gate 3 Pass Criteria
-- [x] Reproducible Pareto table comparing 5 core variants against the 125M reference (`125m`, `45m`, `25m-dense`, `25m-looped12`, `25m-looped14`) across Gate 1 BPB, locked Gate 2, locked OOD (SQuAD v2 + GSM8K + chat), and procedural multi-step syllogism depth (`D = 2..12`) in [`docs/EXPERIMENTS.md`](../docs/EXPERIMENTS.md).
-- [x] At least one **≤ 35M parameter** model achieving ≥ 85% of the Gate 2 125M reference score on tool-use & grounded retrieval (all three ~25–26M cores pass: `100%` syntax, `98–99%` calc, `86.7–88.9%` retrieval [91–94% of `125m`], `0` hallucinated citations, `100%` abstention; `45m` hits `98.9%` retrieval and `84.0%` OOD SQuAD citation).
-- [x] Documented empirical findings on looped vs. dense depth (`1+4×3+1` prelude-recurrent-coda beats both `25m-dense` and `6×2` looping on BPB, SFT loss, OOD reading, and OOD latent logic depth). *(Optional follow-ups: Cognitive Core Purity A/B and vocab compression.)*
+#### Gate 3 Pass Criteria — **PASSED**
+- [x] Reproducible Pareto table comparing **6 core variants** against the 125M reference (`125m`, `45m-dense`, `45m-looped14`, `25m-dense`, `25m-looped12`, `25m-looped14`) across Gate 1 BPB, locked Gate 2, locked OOD (SQuAD v2 + GSM8K + chat), and procedural multi-step syllogism depth (`D = 2..12`) in [`docs/EXPERIMENTS.md`](../docs/EXPERIMENTS.md).
+- [x] At least one **≤ 35M parameter** model achieving ≥ 85% of the Gate 2 125M reference score on tool-use & grounded retrieval (all three ~25–26M cores pass: `100%` syntax, `98–99%` calc, `86.7–88.9%` retrieval [91–94% of `125m`], `0` hallucinated citations, `100%` abstention; `45m-looped14` hits `0.8402` base BPB, `97.8%` retrieval, and **`28.0%` OOD SQuAD EM — beating `125m`**).
+- [x] Documented empirical findings on looped vs. dense depth (`1+4×3+1` prelude-recurrent-coda beats both iso-parameter dense and `6×2` looping on BPB, SFT loss, OOD reading, and OOD latent logic depth).
 
 ---
 
@@ -238,28 +238,59 @@ Author X published Book Y in 1962 <|cite|>d412<|/cite|>, which was 17 years befo
 
 - [x] **Mechanism 1 — Learned Latent Query Head (`src/coregrad/model/memory_bridge.py`, `scripts/run_phase4b_query_head.py`):** Layer sweep (layers 3–18) on frozen `coregrad_125m_base` showed monotonic semantic emergence peaking at **Layer 18/18: `79.8% R@5` (82.8% of `EmbeddingGemma 2`), `88.8% R@10` with 0 generated search tokens** (18.8s training).
 - [x] **Mechanism 2 — Retrofitted Zero-Init Gated Cross-Attention (`scripts/run_phase4b_bridge.py`):** Tested 5 variants (`1-vec EmbeddingGemma 2`, `8-slot RETRO`, `160-tok unpooled RETRO`, plus upper-layer co-adaptation 9–17 with 20% memory dropout). **Falsified by `SHUFFLED` control (`Δ_causal ≈ 0.000` across all 5 runs):** `OFF → MATCHED` (`1.832 → 1.228 BPB`) was 100% content-blind QA-format adaptation because randomly initialized cross-attention lacks pretrained induction/copy circuits at small (~100k answer-token) budgets.
-- [x] **Mechanism 3 — Independent Precomputed GQA KV-Bank Injection (`encode_kv_passage` / `forward_with_kv_bank`, `scripts/run_phase4b_kv_memory.py`):** Precomputes per-passage pre-RoPE GQA `(K, V)` tensors offline (`2.93 MB/passage` in bf16; `3.5s` for 406 passages) and injects them directly into `coregrad-125m`'s pretrained self-attention induction heads (**zero training, zero query-time passage prefill**). Achieved massive causal transfer on held-out SQuAD v2 (`sft_v2`: `k=1` **`Δ = −0.875 BPB` / `20.0% EM` (12×)**; `k=4` **`Δ = −0.784 BPB` / `12.5% EM` / `9.6% F1`** — 88% of full joint text-in-prompt EM and higher F1; `k=8` **`Δ = −0.523 BPB`**).
+- [x] **Mechanism 3 — Independent Precomputed GQA KV-Bank Injection (`encode_kv_passage` / `forward_with_kv_bank`, `scripts/run_phase4b_kv_memory.py`):** Precomputes per-passage pre-RoPE GQA `(K, V)` tensors offline (`2.93 MB/passage` in bf16; `3.5s` for 406 passages) and injects them directly into `coregrad-125m`'s pretrained self-attention induction heads (**zero training, zero query-time passage prefill**). Achieved massive causal transfer on held-out SQuAD v2 (`sft_v2`: `k=1` **`Δ = −0.875 BPB` / `20.0% EM` (12×)**; `k=4` **`Δ = −0.784 BPB` / `12.5% EM` / `9.6% F1`** — 88% of full joint text-in-prompt EM and higher F1; `k=8` **`Δ = −0.523 BPB`**). Wired as opt-in `--kv-cache` / `--query-head` into `scripts/research_cli.py` and `src/coregrad/app/cli.py`.
 - [x] **Published full tables & analysis in [`docs/EXPERIMENTS.md`](../docs/EXPERIMENTS.md).**
 
 ---
 
-### Phase 4.5: Research Findings & Essentialization Addendum (`docs/EXPERIMENTS.md`)
-**Objective:** Publish the complete Gate 3 & Latent Memory Bridge empirical findings so the repository stands as an open mini-monograph.
+### Phase 4C (Architecture & Optimizer Breakthrough): Curing Loop Attractors + Outer GRU Depth-RNN — **COMPLETED**
+**Objective:** Diagnose single-token repetition observed in early looped checkpoints, stabilize optimization with live health telemetry, and design an improved recurrent core architecture.
 
-- [x] `docs/EXPERIMENTS.md` (Section 1: Phase 4B Latent Memory Bridge published; Section 2: Gate 3 Pareto frontier to be appended after Phase 4A).
+- [x] **Root-Cause Fix (`src/coregrad/train/optim.py`, `src/coregrad/model/transformer.py`):** Identified and fixed two coupled bugs: (1) Muon aspect-ratio scaling (`0.2 * sqrt(max(m,n))` + weak `0.2×` WD) inflated weights to `wRMS ≈ 0.65` and residuals to `actRMS ≈ 2,700` while hiding behind Pre-RMSNorm `1/||W||` gradient shrinkage; (2) adding `~1.3`-norm `loop_emb` to a `25,000`-norm residual rounded `loop_emb` to exact zero in BF16. Fixed via Keller Jordan `sqrt(max(1, m/n))` scaling + full `weight_decay`, scale-safe `loop_mode: rms_add`, and an **Outer Gated Depth-RNN + Prelude Re-Injection (`loop_mode: gru`)**.
+- [x] **4-Vital Early Warning Monitor (`trainer.py`, `monitor.py`):** Added live tracking and dashboard plots for `max_w_rms`, `max_layer_gn`, `act_rms`, `max_logit`, `rep4_t0`, `rep4_t07`, `loop_cos`, and `loop_gate_mean`.
+- [x] **Controlled 4-Way 300M-Token Diagnostic (`seed=1337`, fixed Muon):**
+  - `25m-dense` (`25.2M`, 12d): BPB `1.0093`, `T=0.7` rep4 `36.5%`.
+  - `25m-looped14` (`26.1M`, `1+4×3+1`, `rms_add`): BPB `0.9904` (`−0.0189`), `T=0.7` rep4 `22.4%`, zero stutter.
+  - `25m-looped14-gru` (`27.1M`, `1+4×3+1`, `gru`): BPB `0.9726` (`−0.0367`), `loop_cos` `0.881`, markedly better prose expressivity.
+  - **`coregrad-32m-looped16-gru` (`33.04M`, Huginn-style `2+4×3+2`, `gru`) — New Standard Core:** BPB **`0.9634` (`−0.0459` vs dense)**, `wRMS 0.078`, `actRMS 6.6`, `T=0.7` rep4 **`18.0%` (½ of dense)**, `94.7k tok/s`, `7.57 GB` VRAM.
+- [x] **3-Point 100M-Token Muon Bracket Check on `32m-looped16-gru`:** `gentle` (`muon_lr=0.015, wd=0.03`) beat both baseline (`0.020 / 0.10`, `−0.0259` BPB at Step 600) and `hot` (`0.035 / 0.05`, `−0.0059` BPB at 100M with `3.6×` lower `actRMS`). Derived exact Ornstein-Uhlenbeck stationary law `wRMS_eq ≈ 0.190 * sqrt(muon_lr / wd)`, locking **`muon_lr=0.015, wd=0.05`** (`wRMS_eq ≈ 0.104`) for Phase 5.2's `1.5B`-token run.
 
 ---
 
-### Phase 5 (Optional Future Extensions): Symbolic Compute v3, Native Embedder & Private Library Integration
-Once the open 4-tool cognitive core and Phase 4 essentialization experiments are complete:
-1. **Phase 5A — Cognitive Core v3: SymPy + Sandboxed `py(code)` Extension (Post-Training Branch, Zero Base Retraining):**
-   - Extend `calc(expr)` with pure-Python **SymPy** symbolic operations (`solve`, `diff`, `integrate`, `simplify`, `factor`) and add a 5th primitive `py(code)` running in a pluggable sandbox (default: isolated `python -I` subprocess + AST import allowlist + `RLIMIT_CPU`/`RLIMIT_AS`; optional strict Linux `bwrap`/container tier; optional external Maxima CAS plugin).
-   - Generate deterministic SymPy algebra/calculus trajectories + Program-Aided LM (PAL) multi-step math trajectories and branch a ~45-min SFT v3 + Symbolic GRPO run (verifiable reward via `sympy.simplify(pred - gold) == 0`) directly from `coregrad_125m_base`.
-2. **Phase 5B — Optional Self-Contained Native-Space Embedder (`coregrad-doc-embed`):**
-   - Train a compact asymmetric document encoder (initialized from `coregrad-45m` or `coregrad-125m`) via InfoNCE contrastive learning so document vectors land directly inside `coregrad`'s frozen `final_norm(h_L)` query space — eliminating both the translation MLP and any query-time external embedder VRAM.
-   - **Documented Tradeoff:** A compact 6B-token English embedder cannot match a trillion-token generalist embedder (`google/embeddinggemma-2`) on rare domain/user entities without continued domain training over a user's full corpus (which is generally impractical on consumer CPU/single-GPU setups). Kept strictly optional; hybrid `EmbeddingGemma 2` + BM25 remains the recommended default.
-3. **Zero-Training Personal Research (Default — Recommended):** Simply run `coregrad index <local-markdown-dir> --use-embeddinggemma2` and `coregrad chat` against any private books/notes. Because the cognitive core externalizes knowledge by design, the public weights never absorb private text and remain freely shareable.
-4. **Optional Local Domain Adaptation (Opt-In):** Add a clean `optional_local_sources` hook in gitignored `configs/sources.local.yaml` allowing users to locally mix private Markdown books into pretraining or grounded-QA SFT (producing local-only private checkpoints kept strictly outside git).
+### Phase 4.5: Research Findings & Essentialization Addendum (`docs/EXPERIMENTS.md`) — **COMPLETED**
+**Objective:** Publish the complete Gate 3, Latent Memory Bridge, and Loop-Attractor/Outer-GRU empirical findings so the repository stands as an open mini-monograph.
+
+- [x] `docs/EXPERIMENTS.md` (Section 1: Phase 4B Latent Memory Bridge; Section 2.1–2.2: 6-Model Gate 3 Pareto Frontier & Logic Depth Probe; Section 2.3: Loop-Attractor Root Cause & 4-Way Outer GRU Ablation — plus ongoing Phase 5 results).
+
+---
+
+### Phase 5 (Active): `coregrad-DSL`, Compact Reasoning, Interleaved Mid-Training & Scale-Up
+
+#### Phase 5.1 — Unified `coregrad-DSL` Runtime & BPE-Aligned Reasoning (`COMPLETED`)
+Replace verbose error-prone English scratchpads and separate calculator/symbolic/Python tools with one terse, deterministic ASCII-functional DSL wired transparently behind `calc(expr)` (preserving the 4-tool interface):
+- [x] **Sandboxed `coregrad-DSL` Runtime (`src/coregrad/tools/dsl.py`, `tests/test_dsl.py` — `34/34` tests):** Custom recursive-descent parser + fuel/depth/list-bounded evaluator supporting arithmetic, `let` bindings, short-circuit `if(cond, a, b)`, `1..n` ranges, `|>` pipelines (`map`/`filter`/`fold`/`sum`/`len`/`sort`), bounded recursive functions, **SymPy** symbolic ops (`solve`, `diff`, `int`, `simplify`, `expand`, `factor`, `subs`, `limit`), and an exact forward-chaining Horn/exclusion logic prover (`prove(...)`).
+- [x] **4-Level Open-Vocab BPE-Aligned DSL Curriculum (`src/coregrad/synthetic/dsl_gen.py`):** Generates verifiable trajectories pairing natural English problems with left-to-right, space-aligned `calc(...)` DSL invocations across `logic`, `bindings`, `pipelines`, and `symbolic` levels.
+- [x] **GPU Verification (`scripts/run_logic_depth_probe.py`, `docs/EXPERIMENTS.md` §3):** Falsified upfront-`bind:` lookahead `lot` (`20–40%` OOD) and 32-word generator memorization, then proved that **open-vocab + BPE-aligned operator spacing (`a -> b`)** preserves exact BPE token-ID identity with English prose (using *fewer* tokens!) — lifting `coregrad-DSL` `prove(...)` to **`78.3% ID / 44.4% OOD`** on `25m-looped14` and **`76.7% ID / 50.0% OOD`** (`d2=87.5%`, `d10=60.0%`, `99.2%` valid tool syntax) on `45m-looped14` (`+34–40%` ID and `+15%` OOD over English `cot`).
+
+#### Phase 5.2 — Interleaved Pre/Post WSD Mid-Training A/B on `coregrad-32m-looped16-gru` (`NEXT`)
+Test whether mixing assistant-masked tool/`coregrad-DSL`/reasoning trajectories directly into the WSD annealing decay phase outperforms traditional sequential pretraining → SFT on our new `33.04M` `2+4×3+2` Outer GRU core (`muon_lr=0.015, wd=0.05`):
+- [ ] Build unified Phase 5 training data (`scripts/prepare_phase5_data.py` combining Phase 3 tool/RAG/GSM8K/SQuAD/SmolTalk + `coregrad-DSL` 4-level curriculum + compact `coregrad-LoT` traces) and add assistant-masked interleaved decay support to `trainer.py`.
+- [ ] Pretrain `coregrad-32m-looped16-gru` cleanly to a reusable **`1.2B`-token WSD plateau** (`~3.5 hrs` on RTX 4070 Ti).
+- [ ] Branch two controlled **`300M`-token WSD decays** (`~55 min` each) from the exact same `1.2B` checkpoint:
+  - **Branch A (Baseline):** `300M` standard pretraining decay → separate SFT.
+  - **Branch B (Interleaved):** `300M` mixed decay (50% pretraining replay with full LM loss + 50% assistant-masked `coregrad-DSL` / `coregrad-LoT` / tool / RAG / chat trajectories) → short SFT polish.
+- [ ] Evaluate both branches head-to-head on locked Gate 2, locked OOD (SQuAD v2 + GSM8K + chat), a new locked `coregrad-DSL` benchmark (logic `prove` + pipelines/recursion + SymPy), and `D = 2..12` logic depth.
+
+#### Phase 5.3 — Flagship Scale-Up (Decision Gate After Phase 5.2)
+Combine every proven winner (`2+4×3+2` Outer GRU + locked Muon recipe + `coregrad-DSL` + winning decay recipe) into a flagship release:
+- **Option A (Scaled English Core):** `~45M–60M` `2+4×3+2` Outer GRU looped core (`~3B–6B` tokens).
+- **Option B (Multilingual Cognitive Core — `EN + DE + FR + ES`):** `32k` multilingual BPE tokenizer + `~125M` `2+4×3+2` Outer GRU core trained on balanced multilingual open corpora + multilingual `coregrad-DSL`/RAG SFT, paired with multilingual `google/embeddinggemma-2` + BM25 for cross-lingual local Markdown research.
+
+#### Optional Future Extensions (Deferred / Opt-In)
+1. **Isolated `py(code)` Tool:** Add only if `coregrad-DSL` reaches a genuine expressivity ceiling on real local-research workloads (`python -I` + AST allowlist + `RLIMIT_CPU`/`RLIMIT_AS`).
+2. **Self-Contained Native-Space Embedder (`coregrad-doc-embed`):** Contrastively align a compact document encoder into `coregrad`'s frozen `final_norm(h_L)` query space. *Documented tradeoff:* cannot match a trillion-token generalist embedder (`google/embeddinggemma-2`) on rare domain/user entities without continued domain training over a user's corpus; hybrid `EmbeddingGemma 2` + BM25 remains the recommended default.
+3. **Remaining Phase 4A Ablations:** Cognitive Core Purity A/B (`0%` vs. `45%` `edu-en`) and GQA KV-bank injection verification on looped `32m-looped16-gru` checkpoints.
+4. **Zero-Training Personal Research (Default) & Opt-In Local Adaptation:** Run `coregrad index <local-markdown-dir> --use-embeddinggemma2` + `coregrad chat` against any private Markdown library with zero retraining; optionally hook private local corpora via gitignored `configs/sources.local.yaml` (strictly outside git).
 
 ---
 
@@ -267,15 +298,17 @@ Once the open 4-tool cognitive core and Phase 4 essentialization experiments are
 
 | Risk | Likelihood | Mitigation | Graceful Fallback |
 | :--- | :---: | :--- | :--- |
-| **125M struggles with multi-hop (2+ step) tool chains** | Medium | Narrow 4-tool DSL, explicit `<|think|>` traces, fictional multi-hop synthetic generator, GRPO verifiable rewards | Even a rock-solid **1-hop search + read + calc** assistant is genuinely useful for local research |
-| **Overfitting to synthetic templates** | Medium–High | Mix 3 diverse public tool datasets + general chat SFT, randomize synthetic phrasings, replay pretraining data, evaluate on unseen phrasings | Add lightweight local-teacher paraphrasing pass (e.g., open local model) to diversify synthetic questions |
-| **Single-GPU wall-clock fatigue** | Medium | WSD schedule with 500M-token checkpoints; validate all ideas on 45M (~4 hrs) before 125M runs | 45M–60M model trained on 3B–4B tokens (~10–15 hrs) still achieves strong Gate 1 + basic Gate 2 |
-| **12 GB VRAM OOM at 2048 context** | Low–Medium | BF16 + Flash SDPA + gradient accumulation + optional activation checkpointing; benchmark in Phase 0 | Train base at 1024 ctx, extend to 2048 during mid-training/annealing |
+| **Looped weight/activation explosion & repetition attractors** | *Mitigated* | Fixed Muon aspect scaling + full WD + Outer GRU Depth-RNN (`2+4×3+2`) + live 4-vital early-warning monitor (`wRMS`, `actRMS`, `loop_cos`, `rep4`) | Verified stable to `wRMS ≈ 0.08–0.10`, `actRMS ≈ 6–12`, `T=0.7` rep4 halved vs. dense |
+| **$p^D$ BPE subword drift in multi-step English CoT** | High (at ≤ 50M) | Compact `coregrad-LoT` symbolic bindings + deterministic `calc("prove(...)")` offloading in `coregrad-DSL` | Offload formal chaining and algebra to `coregrad-DSL` so the model only parses & synthesizes |
+| **Overfitting to synthetic templates** | Medium–High | Mix 3 diverse public tool datasets + general chat SFT, randomize synthetic phrasings, replay pretraining data, evaluate on locked OOD SQuAD v2 & GSM8K | Interleaved WSD replay (Phase 5.2 Branch B) preserves general language fluency alongside tool syntax |
+| **Single-GPU wall-clock fatigue** | Medium | WSD schedule with reusable `1.2B` plateaus; validate all architecture/optimizer hypotheses at `100M–300M` (`18–55 min`) before scaling | `32m-looped16-gru` at `1.5B` tokens takes only ~4.5 hrs end-to-end on one RTX 4070 Ti |
+| **12 GB VRAM OOM at 2048–4096 context** | Low | BF16 + Flash SDPA + gradient accumulation + optional activation checkpointing (`32m-looped16-gru` uses `7.57 GB` at `mb=8, ctx=2048`) | Enable activation checkpointing for `4096` context extension or `125M` multilingual scale-up |
 
 ---
 
-## 6. Immediate Next Steps
+## 6. Current Status & Immediate Next Steps
 
-1. **Start Phase 0:** Scaffold the `uv` + PyTorch repo, create `configs/datasets.yaml`, `configs/sources.example.yaml`, gitignored `configs/sources.local.yaml`, and `scripts/check_hygiene.py`.
-2. **Run `scripts/bench_gpu.py`:** Lock real tok/s and peak VRAM numbers on the RTX 4070 Ti before launching data packing.
-3. **Start Phase 1:** Inventory the existing public dataset cache, download any missing public slices if needed (backed up to the configured HuggingFace cache root), train the public 16k BPE tokenizer, pack shards, and verify the eval harness.
+- **Completed & Verified on `main`:** Phases 0, 1, 2 (Gate 1), 3 (Gate 2), 3.5 (Study Docs), 4A (Gate 3 — 6-model Pareto ladder), 4B (Latent Memory Bridge & GQA KV-bank), 4C (Loop-Attractor fix, Outer GRU `32m-looped16-gru`, Muon 3-point bracket & OU law), and Phase 5.1 (`coregrad-DSL`, BPE operator-spacing discovery, `34/34` tests).
+- **Immediate Next Steps:**
+  1. **Execute Phase 5.2 Interleaved A/B (`NEXT`):** Build `scripts/prepare_phase5_data.py` + interleaved masked-decay support in `trainer.py`, pretrain `coregrad-32m-looped16-gru` (`muon_lr=0.015, wd=0.05`) to a `1.2B` plateau, and run Branch A (sequential) vs. Branch B (interleaved) `300M`-token decays.
+  2. **Decide Phase 5.3 Flagship Scale-Up:** Choose between scaled English looped core (`45M–60M`) or Multilingual (`EN + DE + FR + ES`, `32k` BPE, `~125M` `2+4×3+2` Outer GRU) based on Phase 5.2 results.

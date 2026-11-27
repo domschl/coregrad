@@ -216,7 +216,45 @@ Controlled 4-way comparison at **300M tokens** (`seed=1337`, identical data stre
 
 **Verdict:** Fixed Muon scaling + `rms_add` completely eliminated the `~2,700` activation explosion and single-token stutter. Adding the **Outer GRU Depth-RNN + Prelude Re-Injection** doubled the BPB gain (`−0.0189 → −0.0367` BPB) and broke inter-loop collapse (`loop_cos: 0.934 → 0.881`), while expanding the interface to **Huginn-style `2` prelude + `4×3` + `2` coda (`33.0M`)** pushed BPB to **`0.9634`** (`−0.0459` vs dense) and halved sampled `T=0.7` repetition (`36.5% → 18.0%`) — establishing **`2+4×3+2` + Outer GRU Depth-RNN + Fixed Muon** as our new standard architecture going into Phase 5.
 
-### 2.4 Remaining Optional Phase 4A Ablations
+### 2.4 3-Point Muon Bracket & Exact Weight-RMS Equilibrium Law on `32m-looped16-gru`
+
+Before launching `1.5B`-token Phase 5.2 runs on our winning `coregrad-32m-looped16-gru` (`33.04M`), we ran a fast 2-point `100M`-token (`762`-step) Muon LR/WD bracket against Run D (`seed=1337`; Steps `300` and `600` are 100% on the flat WSD plateau in all three runs):
+
+| Config (`muon_lr` / `wd`) | Step 300 BPB | **Step 600 BPB** | **Step 762 (`100M`) BPB** | `wRMS` (@600 / @762) | `actRMS` (@600 / @762) | `loop_cos` (@600) | `rep4(T.7)` (@300 / @600) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **`gentle` (`0.015` / `0.03`)** | **`1.4858`** | **`1.1644`** | **`1.0854`** | `0.086` / **`0.090`** | `10.1` / **`12.3`** | `0.961` | **`1.6%`** / **`21.4%`** |
+| Baseline (`0.020` / `0.10`, Run D) | `1.5246` | `1.1903` | *(plateau)* | `0.079` / `0.085` *(eq)* | `8.6` / `10.4` | **`0.951`** | `10.4%` / `23.2%` |
+| `hot` (`0.035` / `0.05`) | `1.4924` | `1.1795` | `1.0913` | `0.159` / `0.159` *(eq)* | `40.7` / `44.8` | `0.965` | `7.0%` / `44.6%` |
+
+**Empirical Ornstein-Uhlenbeck Equilibrium Law:** Across all three points, Muon's steady-state 2D weight RMS matches $\mathrm{wRMS}_{\mathrm{eq}} \approx 0.190 \sqrt{\eta_{\mathrm{muon}} / \lambda_{\mathrm{wd}}}$ to 3 digits (`0.020/0.10`: predicted `0.085`, measured `0.0846`; `0.035/0.05`: predicted `0.159`, measured `0.1588`; `0.015/0.03` at step 600: predicted `0.0866`, measured `0.0858`). We lock **`muon_lr = 0.015, weight_decay = 0.05`** (`wRMS_eq ≈ 0.104`, keeping `gentle`'s winning step size while guaranteeing bounded weight/activation norms over `11,400+` steps) for Phase 5.2.
+
+---
+
+## 3. Phase 5.1 — `coregrad-DSL`, Compact `LoT`, and the BPE Operator-Spacing Discovery
+
+To overcome the $p^D$ BPE subword-drift cliff seen in English `<|think|>` chains (§2.2B), we built a unified, sandboxed ASCII-functional DSL ([`dsl.py`](../src/coregrad/tools/dsl.py), `34/34` tests in [`test_dsl.py`](../tests/test_dsl.py)) wired transparently behind `calc(expr)` — supporting arithmetic, `let`, short-circuit `if`, `1..n` ranges, `|>` pipelines, bounded recursion, SymPy (`solve/diff/int/simplify/expand/factor/subs/limit`), and an exact forward-chaining Horn/exclusion prover (`prove(...)`).
+
+We then ran a controlled 5-step ablation on our locked unseen-vocabulary logic benchmark (`D = 2..12`, [`run_logic_depth_probe.py`](../scripts/run_logic_depth_probe.py), trained only on `D ∈ {2,3,4,5}`):
+
+| Model | Mode / Representation | Mean ID (`d2,4,5`) | **Mean OOD (`d6–12`)** | `d2` | `d5` | `d6` | `d8` | `d10` | `d12` | Tool Valid (`d2–5`) |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `25m-looped14` | `cot` (English prose) | `38.3%` | `37.5%` | `55.0%` | `27.5%` | `37.5%` | `45.0%` | `32.5%` | `35.0%` | — |
+| `25m-looped14` | `lot` (upfront `bind:`, 32w) | `40.0%` | `40.0%` | `37.5%` | `42.5%` | `40.0%` | `37.5%` | `50.0%` | `32.5%` | — |
+| `25m-looped14` | `dsl` tight (`a->b`, 32w) | `36.7%` | `23.1%` | `45.0%` | `30.0%` | `22.5%` | `22.5%` | `22.5%` | `25.0%` | `95.8%` |
+| `25m-looped14` | `dsl` tight (`a->b`, open-vocab) | `44.2%` | `23.1%` | `55.0%` | `35.0%` | `27.5%` | `30.0%` | `17.5%` | `17.5%` | `95.8%` |
+| **`25m-looped14`** | **`dsl` BPE-aligned (`a -> b`, open-vocab)** | **`78.3%`** | **`44.4%`** | **`82.5%`** | **`75.0%`** | **`60.0%`** | **`52.5%`** | `37.5%` | `27.5%` | **`99.2%`** |
+| `45m-looped14` | `cot` (English prose) | `42.5%` | `35.0%` | `55.0%` | `25.0%` | `50.0%` | `40.0%` | `25.0%` | `25.0%` | — |
+| `45m-looped14` | `lot` (upfront `bind:`, 32w) | `30.0%` | `20.0%` | `35.0%` | `20.0%` | `37.5%` | `17.5%` | `12.5%` | `12.5%` | — |
+| `45m-looped14` | `dsl` tight (`a->b`, 32w) | `32.5%` | `18.8%` | `45.0%` | `27.5%` | `22.5%` | `17.5%` | `17.5%` | `17.5%` | `90.0%` |
+| `45m-looped14` | `dsl` tight (`a->b`, open-vocab) | `54.2%` | `30.0%` | `65.0%` | `52.5%` | `32.5%` | `32.5%` | `25.0%` | `30.0%` | **`100.0%`** |
+| **`45m-looped14`** | **`dsl` BPE-aligned (`a -> b`, open-vocab)** | **`76.7%`** | **`50.0%`** | **`87.5%`** | **`67.5%`** | **`65.0%`** | `42.5%` | **`60.0%`** | `32.5%` | **`99.2%`** |
+
+**Three Sharp Design Laws Discovered Before Phase 5.2:**
+1. **No Lookahead Headers (`lot` falsification):** Emitting `bind: P0=...; P1=...` in *solution order* on Line 1 forces an autoregressive model to solve the entire shuffled graph in weights before its first reasoning step (`45m` collapsed to `20.0%` OOD). Left-to-right translation into `prove(...)` requires only `O(1)` lookahead.
+2. **Never Use Small Fixed Vocabularies in Synthetic Generators:** Training on only 32 fixed fictional words caused `loss → 0.0001` memorization; the model hallucinated memorized training predicates (`tovix`) onto unseen eval words. Expanding to `3,400+` disjoint training pseudowords (`_OPEN_TRAIN_PREDS`) immediately lifted `45m` by `+21.7%` ID / `+11.2%` OOD.
+3. **BPE Operator-Spacing Alignment (`+34%` ID / `+20%` OOD from whitespace alone!):** In byte-level BPE, prose words carry a leading space (`" treldon"` → `[1870, 468, 294]`), whereas tight operators strip it (`"treldon->plendor"` → `[115, 293, 468, 294, 538, 484, 479, 305]`, 8 tokens, **zero** leading-token match). Padding operators with single spaces (`" treldon -> plendor"` → `[1870, 468, 294, 4919, 566, 479, 305]`) uses **fewer tokens** while restoring **100% exact token-ID identity** for induction/copy heads — catapulting `25m-looped14` to **`78.3% ID / 44.4% OOD`** (`+40.0%` ID over English `cot`) and `45m-looped14` to **`76.7% ID / 50.0% OOD`** (`d2 = 87.5%`, `d10 = 60.0%`, `99.2%` valid syntax), even on pre-fix checkpoints still suffering repetition loops at `d10–d12`.
+
+### Remaining Optional Phase 4A Ablations
 - Cognitive Core Purity A/B (`25m` pretrained with `0%` web/encyclopedic `edu-en` vs. `45% edu-en`).
 - GQA KV-Bank scaling check on `45m` / `32m-looped16-gru`.
 

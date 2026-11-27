@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from coregrad.synthetic.dsl_gen import generate_dsl_tasks
+from coregrad.synthetic.logic_gen import generate_logic_tasks
 from coregrad.tools.dsl import DSLError, safe_dsl
 from coregrad.tools.executor import ToolExecutor
 from coregrad.tools.protocol import extract_tool_calls, render_trajectory
@@ -52,6 +53,18 @@ def test_dsl_formal_logic_prover() -> None:
 def test_dsl_curriculum_generator_executes_via_tool_executor() -> None:
     tasks = generate_dsl_tasks(32, seed=123)
     assert {t.level for t in tasks} == {"logic", "bindings", "pipelines", "symbolic"}
+    ex = ToolExecutor(None)
+    for t in tasks:
+        rendered = render_trajectory(t.turns)
+        calls = extract_tool_calls(rendered)
+        assert len(calls) == 1
+        res = ex.execute_raw(calls[0])
+        assert res.ok, f"Failed {t.task_id}: {res.output}"
+        assert res.output == t.expected_answer
+
+
+def test_logic_gen_dsl_mode_executes_exact_prover() -> None:
+    tasks = generate_logic_tasks(24, depths=(2, 5, 10), split="eval", seed=77, notation="dsl", cot=False)
     ex = ToolExecutor(None)
     for t in tasks:
         rendered = render_trajectory(t.turns)

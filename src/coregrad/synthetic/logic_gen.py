@@ -14,7 +14,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
-from coregrad.tools.protocol import DEFAULT_SYSTEM_PROMPT, Turn
+from coregrad.tools.protocol import DEFAULT_SYSTEM_PROMPT, Turn, format_tool_call
 
 _TRAIN_ENTITIES = (
     "Kora", "Tavin", "Miren", "Dalen", "Sora", "Vexel", "Nira", "Orin",
@@ -38,6 +38,35 @@ _EVAL_PREDS = (
     "fralen", "mordix", "stelnor", "gravix", "plendor", "trixon", "brenvix", "yaldor",
     "kormel", "senvix", "droval", "larnix", "fenvor", "parvix", "treldon", "wexnor",
 )
+
+
+def _build_open_train_preds() -> tuple[str, ...]:
+    """Build >2,000 pronounceable pseudowords strictly disjoint from _EVAL_PREDS.
+
+    Prevents small models from memorizing a 32-word training vocabulary and forces
+    general verbatim copying / singularization of unseen multi-subword predicates.
+    """
+    onsets = (
+        "ba", "be", "bi", "bo", "bra", "ca", "ce", "co", "da", "de", "do", "dra",
+        "fa", "fe", "fi", "fo", "ga", "ge", "go", "gra", "ha", "he", "ja", "jo",
+        "ka", "ke", "ki", "ko", "kra", "la", "le", "li", "lo", "ma", "me", "mi",
+        "mo", "na", "ne", "no", "pa", "pe", "po", "pra", "ra", "re", "ri", "ro",
+        "sa", "se", "so", "ta", "te", "ti", "to", "tra", "va", "ve", "vi", "vo",
+        "wa", "we", "za", "ze", "zo",
+    )
+    codas = (
+        "bal", "ben", "bor", "dal", "den", "dor", "fal", "fen", "gal", "gen",
+        "kal", "kel", "ken", "kor", "lan", "lar", "len", "lin", "lor", "mal",
+        "mar", "mel", "men", "mor", "nal", "nel", "nor", "pal", "pel", "pen",
+        "ral", "rel", "ren", "rik", "rin", "ron", "sal", "sel", "sen", "tal",
+        "tel", "ten", "tor", "val", "vel", "ven", "vix", "vor", "wal", "zel",
+    )
+    eval_set = set(_EVAL_PREDS)
+    words = [f"{o}{c}" for o in onsets for c in codas if f"{o}{c}" not in eval_set]
+    return tuple(words)
+
+
+_OPEN_TRAIN_PREDS = _build_open_train_preds()
 
 
 @dataclass(frozen=True)
@@ -130,8 +159,8 @@ def _build_single_task(
 ) -> VerifiableLogicTask:
     if depth < 2:
         raise ValueError(f"depth must be >= 2, got {depth}")
-    if notation not in ("english", "lot"):
-        raise ValueError(f"notation must be 'english' or 'lot', got {notation!r}")
+    if notation not in ("english", "lot", "dsl"):
+        raise ValueError(f"notation must be 'english', 'lot', or 'dsl', got {notation!r}")
     entity = rng.choice(entities)
 
     # Reserve enough unique predicates for main chain + optional branch + distractors
@@ -277,16 +306,18 @@ def _build_single_task(
     verified = _prove_entailment(base_facts, unary_rules, neg_rules, conj_rules, target)
     assert verified == expected, f"Prover mismatch: expected={expected}, verified={verified}"
 
-    # Render facts and shuffled rules
-    rule_sentences = (
-        [_render_unary(rng, a, b) for a, b in unary_rules]
-        + [_render_neg(rng, a, b) for a, b in neg_rules]
-        + [_render_conj(rng, a, b, c) for a, b, c in conj_rules]
+    # Render facts and shuffled rules (pair with BPE-aligned space-padded DSL clauses so shuffle order is bit-identical)
+    rule_pairs = (
+        [(_render_unary(rng, a, b), f"{a} -> {b}") for a, b in unary_rules]
+        + [(_render_neg(rng, a, b), f"{a} -/> {b}") for a, b in neg_rules]
+        + [(_render_conj(rng, a, b, c), f"{a} & {b} -> {c}") for a, b, c in conj_rules]
     )
-    rng.shuffle(rule_sentences)
-    fact_sentences = [f"{entity} is a {f}." for f in sorted(base_facts)]
-    rng.shuffle(fact_sentences)
+    rng.shuffle(rule_pairs)
+    fact_pairs = [(f"{entity} is a {f}.", f"x : {f}") for f in sorted(base_facts)]
+    rng.shuffle(fact_pairs)
 
+    rule_sentences = [s for s, _ in rule_pairs]
+    fact_sentences = [s for s, _ in fact_pairs]
     premise_block = " ".join(fact_sentences + rule_sentences)
     question = (
         f"Rules and facts: {premise_block}\n"
@@ -295,7 +326,13 @@ def _build_single_task(
     )
 
     turns: list[Turn] = [Turn("system", DEFAULT_SYSTEM_PROMPT), Turn("user", question)]
-    if cot:
+    if notation == "dsl":
+        # Pure left-to-right O(1)-lookahead semantic parse into BPE-aligned coregrad-DSL prove(...)
+        clauses = [c for _, c in fact_pairs] + [c for _, c in rule_pairs]
+        dsl_expr = f"prove([ {', '.join(clauses)} ], x : {target})"
+        turns.append(Turn("call", format_tool_call("calc", expr=dsl_expr)))
+        turns.append(Turn("result", expected))
+    elif cot:
         if notation == "lot":
             bind_str = "; ".join(f"{sym_map[p]}={p}" for p in used_chain_preds)
             fact_str = ", ".join(f"x:{sym(f)}" for f in sorted(base_facts))
@@ -324,13 +361,17 @@ def generate_logic_tasks(
     n_distractors: int = 3,
     cot: bool = True,
     notation: str = "english",
+    open_vocab: bool = False,
 ) -> list[VerifiableLogicTask]:
     """Generate a balanced, prover-verified dataset of multi-step syllogism & Horn-clause tasks."""
     if split not in ("train", "eval"):
         raise ValueError(f"split must be 'train' or 'eval', got {split!r}")
     rng = random.Random(seed)
     entities = _TRAIN_ENTITIES if split == "train" else _EVAL_ENTITIES
-    preds = _TRAIN_PREDS if split == "train" else _EVAL_PREDS
+    if split == "train":
+        preds = _OPEN_TRAIN_PREDS if open_vocab else _TRAIN_PREDS
+    else:
+        preds = _EVAL_PREDS
     categories = ("syllogism_pos", "syllogism_neg", "syllogism_unknown", "horn_conj")
 
     tasks: list[VerifiableLogicTask] = []

@@ -30,14 +30,19 @@ from coregrad.synthetic.logic_gen import VerifiableLogicTask, generate_logic_tas
 from coregrad.tokenizer import CoreGradTokenizer
 from coregrad.tokenizer.special_tokens import (
     ASSISTANT_END,
+    CALL_END,
+    RESULT_END,
+    RESULT_START,
     SYSTEM_END,
     SYSTEM_START,
     USER_END,
     USER_START,
 )
+from coregrad.tools.executor import ToolExecutor
 from coregrad.tools.protocol import (
     DEFAULT_SYSTEM_PROMPT,
     encode_masked_trajectory,
+    extract_tool_calls,
     strip_think_blocks,
 )
 
@@ -76,22 +81,27 @@ def _eval_depth_tasks(
     device: torch.device,
     *,
     max_new_tokens: int,
+    allow_tools: bool = False,
 ) -> dict[str, Any]:
     model.eval()
     eos_id = tokenizer.eos_id
     end_id = tokenizer.token_to_id(ASSISTANT_END)
+    call_end_id = tokenizer.token_to_id(CALL_END)
     amp = device.type == "cuda"
+    executor = ToolExecutor(None) if allow_tools else None
 
     hits = 0
+    tool_ok = 0
     by_cat: dict[str, list[int]] = {}
     sample_out: str | None = None
     for task in tasks:
         # Match encode_masked_trajectory exactly: end prompt at <|user|>...<|/user|> so the model
-        # emits <|think|>...<|/think|><|assistant|>... in cot mode or <|assistant|>... in direct mode.
+        # emits <|think|>...<|/think|><|assistant|>... (cot/lot), <|call|>... (dsl), or <|assistant|>... (direct).
         prompt = f"{SYSTEM_START}{DEFAULT_SYSTEM_PROMPT}{SYSTEM_END}{USER_START}{task.question}{USER_END}"
         ids = tokenizer.encode(prompt, add_bos=True, add_eos=False)
         x = torch.tensor([ids], dtype=torch.long, device=device)
         gen: list[int] = []
+        used_tool = False
         for _ in range(max_new_tokens):
             with torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp):
                 logits, _ = model(x[:, -model.cfg.max_seq_len :])
@@ -100,6 +110,18 @@ def _eval_depth_tasks(
                 break
             gen.append(nxt)
             x = torch.cat([x, torch.tensor([[nxt]], dtype=torch.long, device=device)], dim=1)
+            if executor is not None and not used_tool and nxt == call_end_id:
+                used_tool = True
+                so_far = tokenizer.decode(gen, skip_special_tokens=False)
+                calls = extract_tool_calls(so_far)
+                if calls:
+                    res = executor.execute_raw(calls[-1])
+                    if res.ok:
+                        tool_ok += 1
+                    res_block = f"{RESULT_START}{res.output}{RESULT_END}"
+                    res_ids = tokenizer.encode(res_block, add_bos=False, add_eos=False)
+                    gen.extend(res_ids)
+                    x = torch.cat([x, torch.tensor([res_ids], dtype=torch.long, device=device)], dim=1)
         raw_gen = tokenizer.decode(gen, skip_special_tokens=False)
         if sample_out is None:
             sample_out = raw_gen
@@ -108,7 +130,7 @@ def _eval_depth_tasks(
         hits += ok
         by_cat.setdefault(task.category, []).append(ok)
 
-    return {
+    out: dict[str, Any] = {
         "accuracy": round(hits / max(len(tasks), 1), 4),
         "hits": hits,
         "total": len(tasks),
@@ -117,18 +139,22 @@ def _eval_depth_tasks(
         },
         "sample_output": (sample_out or "")[:400],
     }
+    if allow_tools:
+        out["tool_valid_rate"] = round(tool_ok / max(len(tasks), 1), 4)
+    return out
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Multi-step syllogism & Horn-clause depth probe.")
     parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--mode", choices=["cot", "direct", "lot"], default="cot")
+    parser.add_argument("--mode", choices=["cot", "direct", "lot", "dsl"], default="cot")
     parser.add_argument("--n-train", type=int, default=8000)
     parser.add_argument("--steps", type=int, default=600)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=1.5e-4)
     parser.add_argument("--eval-per-depth", type=int, default=40)
     parser.add_argument("--eval-depths", type=str, default="2,4,5,6,8,10,12")
+    parser.add_argument("--open-vocab", action="store_true", help="Use >3,000 disjoint train pseudowords instead of 32")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
 
@@ -145,7 +171,7 @@ def main() -> int:
     model.load_state_dict(ckpt["model_state_dict"])
 
     use_cot = args.mode in ("cot", "lot")
-    notation = "lot" if args.mode == "lot" else "english"
+    notation = args.mode if args.mode in ("lot", "dsl") else "english"
     train_depths = (2, 3, 4, 5)
     eval_depths = tuple(int(d.strip()) for d in args.eval_depths.split(",") if d.strip())
 
@@ -155,7 +181,14 @@ def main() -> int:
         flush=True,
     )
     train_tasks = generate_logic_tasks(
-        args.n_train, depths=train_depths, split="train", seed=2026, n_distractors=3, cot=use_cot, notation=notation
+        args.n_train,
+        depths=train_depths,
+        split="train",
+        seed=2026,
+        n_distractors=3,
+        cot=use_cot,
+        notation=notation,
+        open_vocab=args.open_vocab,
     )
     encoded_train = [encode_masked_trajectory(t.turns, tokenizer) for t in train_tasks]
 
@@ -201,8 +234,13 @@ def main() -> int:
             cot=use_cot,
             notation=notation,
         )
-        max_new = ((24 * d + 80) if notation == "lot" else (36 * d + 48)) if use_cot else 12
-        res = _eval_depth_tasks(model, tokenizer, tasks, device, max_new_tokens=max_new)
+        if args.mode == "dsl":
+            max_new = 24 * d + 128
+        elif use_cot:
+            max_new = (24 * d + 80) if notation == "lot" else (36 * d + 48)
+        else:
+            max_new = 12
+        res = _eval_depth_tasks(model, tokenizer, tasks, device, max_new_tokens=max_new, allow_tools=(args.mode == "dsl"))
         depth_results[str(d)] = res
         tag = "ID " if d in train_depths else "OOD"
         print(
