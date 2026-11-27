@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 
 from coregrad.tools.calc import safe_calc
+from coregrad.tools.dsl import DSLError, safe_dsl
 from coregrad.tools.protocol import ToolCall, parse_tool_call, validate_tool_call
 from coregrad.tools.retriever import Retriever
 
@@ -37,11 +38,16 @@ class ToolExecutor:
             return ExecutionResult(ok=False, tool_name=call.name, output=json.dumps({"error": msg}))
 
         if call.name == "calc":
+            expr = str(call.args["expr"])
             try:
-                val = safe_calc(str(call.args["expr"]))
+                val = safe_calc(expr)
                 return ExecutionResult(ok=True, tool_name="calc", output=val)
-            except (ValueError, ArithmeticError, OverflowError) as exc:
-                return ExecutionResult(ok=False, tool_name="calc", output=json.dumps({"error": str(exc)}))
+            except (ValueError, ArithmeticError, OverflowError):
+                try:
+                    val = safe_dsl(expr)
+                    return ExecutionResult(ok=True, tool_name="calc", output=val)
+                except (DSLError, ValueError, ArithmeticError, OverflowError) as exc:
+                    return ExecutionResult(ok=False, tool_name="calc", output=json.dumps({"error": str(exc)}))
 
         if self.retriever is None:
             return ExecutionResult(

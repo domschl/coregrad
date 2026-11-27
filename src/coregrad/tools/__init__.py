@@ -1,4 +1,5 @@
 from coregrad.tools.calc import safe_calc
+from coregrad.tools.dsl import DSLError, safe_dsl
 from coregrad.tools.executor import ExecutionResult, ToolExecutor
 from coregrad.tools.protocol import (
     DEFAULT_SYSTEM_PROMPT,
@@ -27,6 +28,7 @@ from coregrad.tools.retriever import (
 
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
+    "DSLError",
     "Document",
     "Embedder",
     "EmbeddingGemma2Embedder",
@@ -47,6 +49,7 @@ __all__ = [
     "parse_tool_call",
     "render_trajectory",
     "safe_calc",
+    "safe_dsl",
     "strip_think_blocks",
     "validate_tool_call",
 ]

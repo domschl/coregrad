@@ -27,3 +27,10 @@ def test_logic_generator_depths_and_soundness() -> None:
     assert len(tasks_direct) == 16
     assert all(not any(turn.role == "think" for turn in t.turns) for t in tasks_direct)
     assert {t.depth for t in tasks_direct} == {4, 10}
+
+    tasks_lot = generate_logic_tasks(16, depths=(3, 8), split="eval", seed=30, cot=True, notation="lot")
+    assert len(tasks_lot) == 16
+    for t in tasks_lot:
+        think_turns = [turn.content for turn in t.turns if turn.role == "think"]
+        assert len(think_turns) == 1
+        assert "bind:" in think_turns[0] and "fact:" in think_turns[0] and "ans:" in think_turns[0]

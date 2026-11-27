@@ -15,6 +15,9 @@ def main() -> int:
     parser.add_argument("--run-name", type=str, default=None, help="Override run_name")
     parser.add_argument("--optimizer", type=str, default=None, choices=["adamw", "muon"])
     parser.add_argument("--total-tokens", type=int, default=None, help="Override total_tokens")
+    parser.add_argument("--muon-lr", type=float, default=None, help="Override muon_lr")
+    parser.add_argument("--peak-lr", type=float, default=None, help="Override peak_lr")
+    parser.add_argument("--weight-decay", type=float, default=None, help="Override weight_decay")
     parser.add_argument("--resume", action="store_true", help="Resume from latest.pt in run dir")
     parser.add_argument("--init-from", type=Path, default=None, help="Initialize weights from checkpoint")
     parser.add_argument("--no-compile", action="store_true")
@@ -24,6 +27,9 @@ def main() -> int:
         "run_name": args.run_name,
         "optimizer": args.optimizer,
         "total_tokens": args.total_tokens,
+        "muon_lr": args.muon_lr,
+        "peak_lr": args.peak_lr,
+        "weight_decay": args.weight_decay,
     }
     if args.no_compile:
         overrides["compile_model"] = False

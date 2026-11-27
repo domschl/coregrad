@@ -122,7 +122,7 @@ def _eval_depth_tasks(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Multi-step syllogism & Horn-clause depth probe.")
     parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--mode", choices=["cot", "direct"], default="cot")
+    parser.add_argument("--mode", choices=["cot", "direct", "lot"], default="cot")
     parser.add_argument("--n-train", type=int, default=8000)
     parser.add_argument("--steps", type=int, default=600)
     parser.add_argument("--batch-size", type=int, default=16)
@@ -144,7 +144,8 @@ def main() -> int:
     model = CoreGradLM(ModelConfig(**ckpt["model_config"])).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
 
-    use_cot = args.mode == "cot"
+    use_cot = args.mode in ("cot", "lot")
+    notation = "lot" if args.mode == "lot" else "english"
     train_depths = (2, 3, 4, 5)
     eval_depths = tuple(int(d.strip()) for d in args.eval_depths.split(",") if d.strip())
 
@@ -154,7 +155,7 @@ def main() -> int:
         flush=True,
     )
     train_tasks = generate_logic_tasks(
-        args.n_train, depths=train_depths, split="train", seed=2026, n_distractors=3, cot=use_cot
+        args.n_train, depths=train_depths, split="train", seed=2026, n_distractors=3, cot=use_cot, notation=notation
     )
     encoded_train = [encode_masked_trajectory(t.turns, tokenizer) for t in train_tasks]
 
@@ -192,9 +193,15 @@ def main() -> int:
     depth_results: dict[str, Any] = {}
     for d in eval_depths:
         tasks = generate_logic_tasks(
-            args.eval_per_depth, depths=(d,), split="eval", seed=9000 + d, n_distractors=3, cot=use_cot
+            args.eval_per_depth,
+            depths=(d,),
+            split="eval",
+            seed=9000 + d,
+            n_distractors=3,
+            cot=use_cot,
+            notation=notation,
         )
-        max_new = (36 * d + 48) if use_cot else 12
+        max_new = ((24 * d + 80) if notation == "lot" else (36 * d + 48)) if use_cot else 12
         res = _eval_depth_tasks(model, tokenizer, tasks, device, max_new_tokens=max_new)
         depth_results[str(d)] = res
         tag = "ID " if d in train_depths else "OOD"

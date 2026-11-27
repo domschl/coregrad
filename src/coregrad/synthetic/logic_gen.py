@@ -126,9 +126,12 @@ def _build_single_task(
     preds: tuple[str, ...],
     n_distractors: int,
     cot: bool,
+    notation: str = "english",
 ) -> VerifiableLogicTask:
     if depth < 2:
         raise ValueError(f"depth must be >= 2, got {depth}")
+    if notation not in ("english", "lot"):
+        raise ValueError(f"notation must be 'english' or 'lot', got {notation!r}")
     entity = rng.choice(entities)
 
     # Reserve enough unique predicates for main chain + optional branch + distractors
@@ -145,15 +148,28 @@ def _build_single_task(
     conj_rules: list[tuple[str, str, str]] = []
     base_facts: set[str] = set()
     think_steps: list[str] = []
+    # Compact single-token symbol mapping for Language-of-Thought (LoT) mode
+    sym_map: dict[str, str] = {}
+    used_chain_preds: list[str] = []
+
+    def sym(p: str) -> str:
+        if p not in sym_map:
+            idx_s = len(sym_map)
+            sym_map[p] = f"P{idx_s}"
+            used_chain_preds.append(p)
+        return sym_map[p]
 
     if category == "syllogism_pos":
         chain = chosen[: depth + 1]
         base_facts.add(chain[0])
         for i in range(depth):
             unary_rules.append((chain[i], chain[i + 1]))
-            think_steps.append(
-                f"Step {i + 1}: {entity} is a {chain[i]} and every {chain[i]} is a {chain[i + 1]}, so {entity} is a {chain[i + 1]}."
-            )
+            if notation == "lot":
+                think_steps.append(f"{sym(chain[i])}->{sym(chain[i + 1])} => x:{sym(chain[i + 1])}")
+            else:
+                think_steps.append(
+                    f"Step {i + 1}: {entity} is a {chain[i]} and every {chain[i]} is a {chain[i + 1]}, so {entity} is a {chain[i + 1]}."
+                )
         target = chain[depth]
         expected = "True"
         used_end = depth + 1
@@ -163,13 +179,19 @@ def _build_single_task(
         base_facts.add(chain[0])
         for i in range(depth - 1):
             unary_rules.append((chain[i], chain[i + 1]))
-            think_steps.append(
-                f"Step {i + 1}: {entity} is a {chain[i]} and every {chain[i]} is a {chain[i + 1]}, so {entity} is a {chain[i + 1]}."
-            )
+            if notation == "lot":
+                think_steps.append(f"{sym(chain[i])}->{sym(chain[i + 1])} => x:{sym(chain[i + 1])}")
+            else:
+                think_steps.append(
+                    f"Step {i + 1}: {entity} is a {chain[i]} and every {chain[i]} is a {chain[i + 1]}, so {entity} is a {chain[i + 1]}."
+                )
         neg_rules.append((chain[depth - 1], chain[depth]))
-        think_steps.append(
-            f"Step {depth}: {entity} is a {chain[depth - 1]} and no {chain[depth - 1]} is a {chain[depth]}, so {entity} is not a {chain[depth]}."
-        )
+        if notation == "lot":
+            think_steps.append(f"{sym(chain[depth - 1])}-/>{sym(chain[depth])} => !x:{sym(chain[depth])}")
+        else:
+            think_steps.append(
+                f"Step {depth}: {entity} is a {chain[depth - 1]} and no {chain[depth - 1]} is a {chain[depth]}, so {entity} is not a {chain[depth]}."
+            )
         target = chain[depth]
         expected = "False"
         used_end = depth + 1
@@ -181,24 +203,30 @@ def _build_single_task(
         break_at = rng.randint(max(1, depth // 2), depth - 1)
         for i in range(depth):
             if i == break_at:
-                # Reversed implication: All chain[i+1] are chain[i] (does NOT imply chain[i] -> chain[i+1])
                 unary_rules.append((chain[i + 1], chain[i]))
             else:
                 unary_rules.append((chain[i], chain[i + 1]))
         for i in range(break_at):
+            if notation == "lot":
+                think_steps.append(f"{sym(chain[i])}->{sym(chain[i + 1])} => x:{sym(chain[i + 1])}")
+            else:
+                think_steps.append(
+                    f"Step {i + 1}: {entity} is a {chain[i]} and every {chain[i]} is a {chain[i + 1]}, so {entity} is a {chain[i + 1]}."
+                )
+        if notation == "lot":
             think_steps.append(
-                f"Step {i + 1}: {entity} is a {chain[i]} and every {chain[i]} is a {chain[i + 1]}, so {entity} is a {chain[i + 1]}."
+                f"rev({sym(chain[break_at + 1])}->{sym(chain[break_at])}) => stop; goal:{sym(chain[depth])}=?"
             )
-        think_steps.append(
-            f"Step {break_at + 1}: We know {entity} is a {chain[break_at]}, and every {chain[break_at + 1]} is a {chain[break_at]}, "
-            f"but that does not prove {entity} is a {chain[break_at + 1]}. Therefore {chain[depth]} cannot be proven or disproven."
-        )
+        else:
+            think_steps.append(
+                f"Step {break_at + 1}: We know {entity} is a {chain[break_at]}, and every {chain[break_at + 1]} is a {chain[break_at]}, "
+                f"but that does not prove {entity} is a {chain[break_at + 1]}. Therefore {chain[depth]} cannot be proven or disproven."
+            )
         target = chain[depth]
         expected = "Unknown"
         used_end = depth + 1
 
     elif category == "horn_conj":
-        # Two-branch chain joining at a conjunctive Horn rule (A_k AND B -> A_{k+1})
         chain = chosen[: depth + 1]
         side_p = chosen[depth + 1]
         join_at = max(1, depth // 2)
@@ -207,14 +235,22 @@ def _build_single_task(
         for i in range(depth):
             if i == join_at:
                 conj_rules.append((chain[i], side_p, chain[i + 1]))
-                think_steps.append(
-                    f"Step {i + 1}: {entity} is both a {chain[i]} and a {side_p}, so {entity} is a {chain[i + 1]}."
-                )
+                if notation == "lot":
+                    think_steps.append(
+                        f"{sym(chain[i])}&{sym(side_p)}->{sym(chain[i + 1])} => x:{sym(chain[i + 1])}"
+                    )
+                else:
+                    think_steps.append(
+                        f"Step {i + 1}: {entity} is both a {chain[i]} and a {side_p}, so {entity} is a {chain[i + 1]}."
+                    )
             else:
                 unary_rules.append((chain[i], chain[i + 1]))
-                think_steps.append(
-                    f"Step {i + 1}: {entity} is a {chain[i]} and every {chain[i]} is a {chain[i + 1]}, so {entity} is a {chain[i + 1]}."
-                )
+                if notation == "lot":
+                    think_steps.append(f"{sym(chain[i])}->{sym(chain[i + 1])} => x:{sym(chain[i + 1])}")
+                else:
+                    think_steps.append(
+                        f"Step {i + 1}: {entity} is a {chain[i]} and every {chain[i]} is a {chain[i + 1]}, so {entity} is a {chain[i + 1]}."
+                    )
         target = chain[depth]
         expected = "True"
         used_end = depth + 2
@@ -260,7 +296,13 @@ def _build_single_task(
 
     turns: list[Turn] = [Turn("system", DEFAULT_SYSTEM_PROMPT), Turn("user", question)]
     if cot:
-        turns.append(Turn("think", " ".join(think_steps) + f" Conclusion: {expected}."))
+        if notation == "lot":
+            bind_str = "; ".join(f"{sym_map[p]}={p}" for p in used_chain_preds)
+            fact_str = ", ".join(f"x:{sym(f)}" for f in sorted(base_facts))
+            think_body = f"bind: x={entity}; {bind_str}\nfact: {fact_str}\n" + "\n".join(think_steps) + f"\nans: {expected}"
+        else:
+            think_body = " ".join(think_steps) + f" Conclusion: {expected}."
+        turns.append(Turn("think", think_body))
     turns.append(Turn("assistant", expected))
 
     return VerifiableLogicTask(
@@ -281,6 +323,7 @@ def generate_logic_tasks(
     seed: int = 42,
     n_distractors: int = 3,
     cot: bool = True,
+    notation: str = "english",
 ) -> list[VerifiableLogicTask]:
     """Generate a balanced, prover-verified dataset of multi-step syllogism & Horn-clause tasks."""
     if split not in ("train", "eval"):
@@ -304,6 +347,7 @@ def generate_logic_tasks(
                 preds=preds,
                 n_distractors=n_distractors,
                 cot=cot,
+                notation=notation,
             )
         )
     rng.shuffle(tasks)
