@@ -85,13 +85,29 @@ def main() -> int:
     mcfg_path = args.model_config if args.model_config.is_absolute() else (REPO_ROOT / args.model_config)
     mcfg = HNetConfig.from_yaml(mcfg_path, max_seq_len=max(args.seq_len, 4096))
     model = CoreGradByteLM(mcfg).to(dev)
+    raw_enc = list(model.enc_blocks)
+    raw_core = list(model.core_blocks)
+    raw_dec = list(model.dec_blocks)
+    comp_enc: list[torch.nn.Module] | None = None
+    comp_core: list[torch.nn.Module] | None = None
+    comp_dec: list[torch.nn.Module] | None = None
     if args.compile_blocks and dev.type == "cuda":
-        for i in range(len(model.enc_blocks)):
-            model.enc_blocks[i] = torch.compile(model.enc_blocks[i])  # type: ignore[assignment]
-        for i in range(len(model.core_blocks)):
-            model.core_blocks[i] = torch.compile(model.core_blocks[i], dynamic=True)  # type: ignore[assignment]
-        for i in range(len(model.dec_blocks)):
-            model.dec_blocks[i] = torch.compile(model.dec_blocks[i])  # type: ignore[assignment]
+        # Compile only for the fixed training global state (grad=True, bf16=True); swap back to
+        # raw eager blocks during eval/generation so variable eval lengths never exhaust recompile_limit.
+        comp_enc = [torch.compile(b) for b in raw_enc]
+        comp_core = [torch.compile(b, dynamic=True) for b in raw_core]
+        comp_dec = [torch.compile(b) for b in raw_dec]
+
+    def _set_compiled(enabled: bool) -> None:
+        if comp_enc is None or comp_core is None or comp_dec is None:
+            return
+        src_e, src_c, src_d = (comp_enc, comp_core, comp_dec) if enabled else (raw_enc, raw_core, raw_dec)
+        for i, b in enumerate(src_e):
+            model.enc_blocks[i] = b  # type: ignore[assignment]
+        for i, b in enumerate(src_c):
+            model.core_blocks[i] = b  # type: ignore[assignment]
+        for i, b in enumerate(src_d):
+            model.dec_blocks[i] = b  # type: ignore[assignment]
     optimizer = build_optimizer(
         model,
         optimizer_type=args.optimizer,
@@ -167,6 +183,7 @@ def main() -> int:
         tmp.replace(path)
 
     def run_eval(cur_step: int, cur_bytes: int) -> float:
+        _set_compiled(False)
         model.eval()
         # Evaluate ~524k UTF-8 bytes/domain (~131k BPE tokens/domain, matching BPE eval window!)
         bpb_res = evaluate_validation_bpb(
@@ -218,10 +235,12 @@ def main() -> int:
             preview = "|".join(chunks)
             print(f"  [chunks R={len(p_txt.encode('utf-8'))/max(len(chunks),1):.2f}] {preview}", flush=True)
         model.train()
+        _set_compiled(True)
         return mean_bpb
 
     run_eval(0, 0)
     model.train()
+    _set_compiled(True)
     if dev.type == "cuda":
         torch.cuda.reset_peak_memory_stats(dev)
 
