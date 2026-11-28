@@ -13,8 +13,7 @@ from typing import Any
 import torch
 
 from coregrad.config import load_local_paths
-from coregrad.model import CoreGradLM, ModelConfig
-from coregrad.tokenizer import CoreGradTokenizer
+from coregrad.model import load_checkpoint_model_and_tokenizer
 from coregrad.tools import ToolExecutor
 from coregrad.tools.rollout import answer_matches, run_agent_rollout
 
@@ -49,10 +48,7 @@ def main() -> int:
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
-    tokenizer = CoreGradTokenizer.from_file(paths.data_dir / "tokenizer" / "tokenizer.json")
-    ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-    model = CoreGradLM(ModelConfig(**ckpt["model_config"])).to(device)
-    model.load_state_dict(ckpt["model_state_dict"])
+    model, tokenizer, _ = load_checkpoint_model_and_tokenizer(args.checkpoint, device)
     model.eval()
 
     eval_path = args.eval_json or (paths.data_dir / "phase5" / "dsl_eval_tasks.json")

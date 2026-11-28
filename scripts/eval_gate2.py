@@ -11,8 +11,7 @@ import torch
 
 from coregrad.config import load_local_paths
 from coregrad.eval.gate2 import evaluate_gate2
-from coregrad.model import CoreGradLM, ModelConfig
-from coregrad.tokenizer import CoreGradTokenizer
+from coregrad.model import load_checkpoint_model_and_tokenizer
 
 
 def main() -> int:
@@ -30,10 +29,7 @@ def main() -> int:
     eval_path = args.eval_tasks or (paths.data_dir / "phase3" / "eval_tasks.json")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    tokenizer = CoreGradTokenizer.from_file(tok_path)
-    ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-    model = CoreGradLM(ModelConfig(**ckpt["model_config"])).to(device)
-    model.load_state_dict(ckpt["model_state_dict"])
+    model, tokenizer, _ = load_checkpoint_model_and_tokenizer(args.checkpoint, device, tokenizer_path=tok_path)
 
     report = evaluate_gate2(
         model,

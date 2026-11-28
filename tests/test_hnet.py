@@ -98,3 +98,24 @@ def test_hnet_strict_causality_and_router_gradient_flow() -> None:
     assert "".join(chunks) == "Hello coregrad!"
     gen = model.generate(x[:1, :8], max_new_tokens=6, temperature=0.0)
     assert gen.shape == (1, 14)
+
+    # 4. UTF-8 FSM sampling guard guarantees 100% strict UTF-8 validity even at high temperature on random weights
+    torch.manual_seed(99)
+    prompt_ids = torch.tensor([tok.encode("Hello ")], dtype=torch.long)
+    sampled = model.generate(prompt_ids, max_new_tokens=64, temperature=1.5, top_k=None, enforce_utf8=True)[0].tolist()
+    # Strip any incomplete trailing multi-byte sequence at the exact max_new_tokens cutoff, then verify strict UTF-8
+    raw_bytes = bytearray()
+    for tid in sampled:
+        if tid < 256:
+            raw_bytes.append(tid)
+        else:
+            raw_bytes.decode("utf-8", errors="strict")
+            raw_bytes.clear()
+    # Allow at most 3 trailing incomplete bytes cut off right at max_new_tokens
+    for trim in range(4):
+        try:
+            bytes(raw_bytes[: len(raw_bytes) - trim]).decode("utf-8", errors="strict")
+            break
+        except UnicodeDecodeError:
+            if trim == 3:
+                raise

@@ -14,7 +14,7 @@ from typing import Any
 import torch
 
 from coregrad.config import load_local_paths, load_yaml
-from coregrad.model import CoreGradLM, ModelConfig
+from coregrad.model import CoreGradByteLM, CoreGradLM, load_checkpoint_model_and_tokenizer
 from coregrad.tokenizer import CoreGradTokenizer
 from coregrad.tools import (
     Document,
@@ -274,17 +274,16 @@ def train_sft(
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
-    tokenizer = CoreGradTokenizer.from_file(tok_path)
-
-    ckpt = torch.load(cfg.init_from, map_location="cpu", weights_only=False)
-    model_cfg_dict = dict(ckpt["model_config"])
-    model_cfg_dict["max_seq_len"] = max(int(model_cfg_dict.get("max_seq_len", 2048)), cfg.seq_len)
-    model_cfg_dict["activation_checkpointing"] = cfg.activation_checkpointing
-    if cfg.rope_theta_override is not None:
-        model_cfg_dict["rope_theta"] = cfg.rope_theta_override
-    model_cfg = ModelConfig(**model_cfg_dict)
-    model = CoreGradLM(model_cfg).to(dev)
-    model.load_state_dict(ckpt["model_state_dict"], strict=True)
+    model, tokenizer, _ckpt = load_checkpoint_model_and_tokenizer(
+        cfg.init_from,
+        dev,
+        tokenizer_path=tok_path,
+        min_seq_len=cfg.seq_len,
+        activation_checkpointing=cfg.activation_checkpointing,
+        rope_theta_override=cfg.rope_theta_override,
+    )
+    model_cfg = model.cfg
+    is_byte_model = isinstance(model, CoreGradByteLM)
 
     print(f"Loading & encoding SFT examples from {cfg.train_jsonl} ...", flush=True)
     raw_train = load_encoded_sft_examples(
@@ -320,7 +319,7 @@ def train_sft(
         model, optimizer_type=cfg.optimizer, lr=cfg.peak_lr, weight_decay=cfg.weight_decay
     )
     train_model: torch.nn.Module = (
-        torch.compile(model) if (cfg.compile_model and dev.type == "cuda") else model
+        torch.compile(model) if (cfg.compile_model and dev.type == "cuda" and not is_byte_model) else model
     )
 
     tokens_per_step = cfg.seq_len * cfg.micro_batch * cfg.grad_accum
@@ -473,6 +472,7 @@ def train_sft(
                 "step": step,
                 "tokens_seen": tokens_seen,
                 "val_loss": val_loss,
+                "model_type": "hnet_byte" if is_byte_model else "bpe_lm",
                 "model_config": asdict(model.cfg),
                 "sft_config": asdict(cfg),
                 "model_state_dict": model.state_dict(),

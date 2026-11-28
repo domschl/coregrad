@@ -8,8 +8,8 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 
-from coregrad.model import CoreGradLM
-from coregrad.tokenizer import CoreGradTokenizer
+from coregrad.model import CoreGradByteLM, CoreGradLM
+from coregrad.tokenizer import ByteTokenizer, CoreGradTokenizer
 from coregrad.tokenizer.special_tokens import (
     ASSISTANT_END,
     ASSISTANT_START,
@@ -58,8 +58,8 @@ class RolloutTrace:
 
 @torch.no_grad()
 def run_agent_rollout(
-    model: CoreGradLM,
-    tokenizer: CoreGradTokenizer,
+    model: CoreGradLM | CoreGradByteLM,
+    tokenizer: CoreGradTokenizer | ByteTokenizer,
     question: str,
     executor: ToolExecutor | None,
     device: torch.device,
@@ -72,6 +72,8 @@ def run_agent_rollout(
 ) -> RolloutTrace:
     """Run a live multi-turn model <-> ToolExecutor rollout, tracking assistant token masks."""
     model.eval()
+    # Scale per-turn generation budget cleanly for raw UTF-8 byte models (~4 bytes per BPE token)
+    turn_budget = max_new_tokens_per_turn * 4 if isinstance(tokenizer, ByteTokenizer) else max_new_tokens_per_turn
     prefix = f"{SYSTEM_START}{system_prompt}{SYSTEM_END}{USER_START}{question}{USER_END}"
     prompt_ids = tokenizer.encode(prefix, add_bos=True, add_eos=False)
 
@@ -91,7 +93,7 @@ def run_agent_rollout(
         stopped_on_call = False
         stopped_on_eos = False
 
-        for _step in range(max_new_tokens_per_turn):
+        for _step in range(turn_budget):
             ctx = full_ids[-model.cfg.max_seq_len :]
             x = torch.tensor([ctx], dtype=torch.long, device=device)
             with torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp_enabled):

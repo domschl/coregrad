@@ -22,8 +22,8 @@ import pyarrow.parquet as pq
 import torch
 
 from coregrad.config import load_local_paths
-from coregrad.model import CoreGradLM, ModelConfig
-from coregrad.tokenizer import CoreGradTokenizer
+from coregrad.model import CoreGradByteLM, CoreGradLM, load_checkpoint_model_and_tokenizer
+from coregrad.tokenizer import ByteTokenizer, CoreGradTokenizer
 from coregrad.tools import Document, InMemoryBM25Retriever, ToolExecutor
 from coregrad.tools.rollout import answer_matches, run_agent_rollout
 
@@ -44,8 +44,8 @@ def _extract_gsm8k_answer(ans_field: str) -> str:
 
 
 def evaluate_ood(
-    model: CoreGradLM,
-    tokenizer: CoreGradTokenizer,
+    model: CoreGradLM | CoreGradByteLM,
+    tokenizer: CoreGradTokenizer | ByteTokenizer,
     hf_cache_dir: Path,
     device: torch.device,
     *,
@@ -185,10 +185,8 @@ def main() -> int:
     paths = load_local_paths()
     assert paths.hf_cache_dir is not None
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    tokenizer = CoreGradTokenizer.from_file(paths.data_dir / "tokenizer" / "tokenizer.json")
-    ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-    model = CoreGradLM(ModelConfig(**ckpt["model_config"])).to(device).eval()
-    model.load_state_dict(ckpt["model_state_dict"])
+    model, tokenizer, _ = load_checkpoint_model_and_tokenizer(args.checkpoint, device)
+    model.eval()
 
     report = evaluate_ood(model, tokenizer, paths.hf_cache_dir, device)
     report["checkpoint"] = str(args.checkpoint)

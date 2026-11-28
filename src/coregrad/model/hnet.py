@@ -519,6 +519,48 @@ class CoreGradByteLM(nn.Module):
                 chunks[-1].append(tid)
         return [tokenizer.decode(c, skip_special_tokens=False) for c in chunks]
 
+    @staticmethod
+    def _utf8_valid_next_token_mask(seq_ids: list[int], vocab_size: int, device: torch.device) -> torch.Tensor:
+        """Exact 4-state UTF-8 FSM mask: guarantees 100% valid UTF-8 and no mid-char special tokens."""
+        pending = 0
+        trail: list[int] = []
+        for tid in reversed(seq_ids[-3:]):
+            if tid >= 256:
+                break
+            trail.append(tid)
+            if (tid & 0xC0) != 0x80:
+                break
+        if trail:
+            lead = trail[-1]
+            have_cont = len(trail) - 1
+            if 0xC2 <= lead <= 0xDF:
+                pending = max(0, 1 - have_cont)
+            elif 0xE0 <= lead <= 0xEF:
+                pending = max(0, 2 - have_cont)
+            elif 0xF0 <= lead <= 0xF4:
+                pending = max(0, 3 - have_cont)
+
+        mask = torch.zeros(vocab_size, dtype=torch.bool, device=device)
+        if pending > 0:
+            lo, hi = 0x80, 0xBF
+            if len(trail) == 1:
+                lead = trail[0]
+                if lead == 0xE0:
+                    lo = 0xA0
+                elif lead == 0xED:
+                    hi = 0x9F
+                elif lead == 0xF0:
+                    lo = 0x90
+                elif lead == 0xF4:
+                    hi = 0x8F
+            mask[lo : hi + 1] = True
+        else:
+            mask[0x00:0x80] = True
+            mask[0xC2:0xF5] = True
+            if vocab_size > 256:
+                mask[256:vocab_size] = True
+        return mask
+
     @torch.no_grad()
     def generate(
         self,
@@ -527,6 +569,7 @@ class CoreGradByteLM(nn.Module):
         temperature: float = 0.7,
         top_k: int | None = 40,
         eos_token_id: int | None = None,
+        enforce_utf8: bool = True,
     ) -> torch.Tensor:
         self.eval()
         out = input_ids
@@ -536,6 +579,10 @@ class CoreGradByteLM(nn.Module):
             with torch.amp.autocast(device_type=ctx.device.type, dtype=torch.bfloat16, enabled=amp):
                 logits, _ = self(ctx)
             next_logits = logits[:, -1, :].float()
+            if enforce_utf8:
+                for b_idx in range(out.size(0)):
+                    valid = self._utf8_valid_next_token_mask(out[b_idx].tolist(), next_logits.size(-1), out.device)
+                    next_logits[b_idx].masked_fill_(~valid, -float("inf"))
             if temperature <= 0.0:
                 next_tok = torch.argmax(next_logits, dim=-1, keepdim=True)
             else:
