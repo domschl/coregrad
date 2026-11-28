@@ -284,15 +284,16 @@ Tested whether mixing assistant-masked tool/`coregrad-DSL`/reasoning trajectorie
 #### Phase 5.3 — Gate 4 (H-Net UTF-8 Dynamic Patching vs. BPE) & Universal Multi-Script Core (`NEXT`)
 With `coregrad-32m-looped16-gru` validated as a `100%` Gate 2 / `98.8%` `coregrad-DSL` cognitive core at `~25M` non-embedding parameters, we avoid prematurely locking the project to a fixed multilingual BPE vocabulary by inserting a falsifiable architectural gate:
 
-- **Phase 5.3A — Gate 4: `coregrad-Byte` (H-Net Self-Learned UTF-8 Patching + `2+4×3+2` Outer GRU) vs. `16k` BPE:**
-  - Replace the `16k` BPE table (`8.4M` params) with raw **UTF-8 bytes (`0..255`) + `16` special protocol tokens = `272` vocab (`0.14M` emb params)**:
-    - `2` local causal sliding-window byte encoder layers → **H-Net cosine-similarity Boundary Router** with ratio loss (target `R ≈ 4.5×` bytes/chunk, so `~9 KB` UTF-8 compresses to `~2,048` latent patches with zero effective context-length loss) → **`4×3` Shared Outer-GRU Global Core** → **EMA Smoothing + STE Upsampler** → `2` local causal sliding-window byte decoder layers → `272`-way head.
-  - **Controlled Parity Test 1 (Language Modeling, ~1.5–2 hrs):** Train `coregrad-32m-hnet-gru` on the exact same `~1.2 GB` UTF-8 English corpus as our locked `300M`-token `16k`-BPE `coregrad-32m-looped16-gru` (`0.9634` BPB) and compare in **tokenizer-agnostic Bits-Per-Byte (BPB)** on identical held-out validation bytes + inspect learned chunk boundaries and health vitals.
+- **Phase 5.3A — Gate 4: `coregrad-Byte` (H-Net Self-Learned UTF-8 Patching + `2+4×3+2` Outer GRU) vs. `16k` BPE (`RUNNING`):**
+  - Replace the `16k` BPE table (`8.4M` params) with raw **UTF-8 bytes (`0..255`) + `32` special protocol slots = `288` vocab (`0.15M` emb params)**:
+    - `2` local causal sliding-window byte encoder layers (`flex_attention`, `W=256`) → **H-Net cosine-similarity Boundary Router** with ratio loss (target `R ≈ 4.5×` bytes/chunk, preserving full effective context length) → **`4×3` Shared Outer-GRU Global Core** → **Parallel $O(\log M)$ EMA Smoothing + STE Upsampler** → `2` local causal sliding-window byte decoder layers → `288`-way head.
+  - **Controlled Parity Test 1 (Language Modeling, ~1.5–2 hrs):** Train `coregrad-32m-hnet-gru` (`25.59M` total / `25.44M` non-emb) on the exact same `~1.2 GB` UTF-8 English corpus as our locked `300M`-token `16k`-BPE `coregrad-32m-looped16-gru` (`0.9634` BPB) and compare in **tokenizer-agnostic Bits-Per-Byte (BPB)** on identical held-out validation bytes + inspect learned chunk boundaries and health vitals.
   - **Controlled Parity Test 2 (Tool/DSL & Copy-Head Test, ~1 hr):** Verify interleaved masked `coregrad-DSL` + Gate 2 + unseen-vocab `prove()` on `coregrad-Byte` (testing whether raw UTF-8 eliminates BPE boundary drift natively).
   - **Gate 4 Pass Criteria:** Within `~0.02–0.03` BPB of `16k` BPE at matched text budget with stable vitals, clean morpheme/word chunking, and ≥ 95% Gate 2 / `coregrad-DSL` accuracy.
 
-- **Phase 5.3B — Universal Multi-Script Cognitive Core (If Gate 4 PASSES):**
-  - **Stage 1 (Anchor Multi-Script Core, `~12–16 GB` UTF-8):** Train `coregrad-Byte` (`~35M–50M` active compute params, 99.5% non-embedding) on a balanced multi-script anchor mixture (`HuggingFaceFW/fineweb-2` ODC-By across **Latin** `EN/DE/FR/ES` + agglutinative `TR`/`FI`, **Cyrillic** `RU`, **Arabic** `AR`, **Devanagari** `HI`, **CJK/Hangul** `ZH/JA/KO`, plus shared `code`/`finemath`/`cosmo` reasoning anchor).
+- **Phase 5.3B — Multilingual Capacity Scaling Law & Universal Multi-Script Core (If Gate 4 PASSES):**
+  - **Stage 0 (Empirical Capacity Scaling Law, ~4–5 hrs):** Measure `coregrad-Byte`'s exact $(\alpha, \gamma_{\text{same}}, \gamma_{\text{cross}})$ across `$N \in \{15\text{M}, 30\text{M}, 65\text{M}\} \times K \in \{1\text{ (EN)}, 2\text{ (EN+DE)}, 4\text{ (EN+RU+AR+ZH)}\}$` to pin down the exact `N*(K)` capacity needed (splitting $N_{\text{interface}}$ vs. $N_{\text{core}}$).
+  - **Stage 1 (Anchor Multi-Script Core, `~12–16 GB` UTF-8):** Train right-sized `coregrad-Byte` (`~65M–110M` active compute params, 99.8% non-embedding) on a balanced multi-script anchor mixture (`HuggingFaceFW/fineweb-2` ODC-By across **Latin** `EN/DE/FR/ES` + agglutinative `TR`/`FI`, **Cyrillic** `RU`, **Arabic** `AR`, **Devanagari** `HI`, **CJK/Hangul** `ZH/JA/KO`, plus shared `code`/`finemath`/`cosmo` reasoning anchor).
   - **Stage 2 (Cross-Lingual Interleaved Decay):** 50% multilingual replay + 50% localized `coregrad-DSL` / fictional retrieval / public multilingual QA (`TyDiQA`/`MLQA`/`mGSM`/chat) paired with natively 100+-language `google/embeddinggemma-2` + BM25.
   - **Stage 3 (On-Demand Continual Language Expansion Verification):** Prove that a brand-new unseen language/script (e.g., Greek `ell_Grek` or Polish `pol_Latn`) can be added to a trained `coregrad-Byte` checkpoint via a ~1–2 hr continual interleaved branch with **zero tokenizer changes and zero catastrophic forgetting**.
 
@@ -300,11 +301,25 @@ With `coregrad-32m-looped16-gru` validated as a `100%` Gate 2 / `98.8%` `coregra
   - **Option A (Scaled English Core):** `~45M–60M` `2+4×3+2` Outer GRU looped core (`16k` BPE).
   - **Option C Fallback (Multi-Script `65k` BPE "World Core"):** Keep the `~26M` Outer-GRU trunk + custom balanced `65k` BPE (`~60M` total, chunked cross-entropy loss) covering `EN/DE/FR/ES`, `RU`, `AR`, `HI`, `ZH`.
 
-#### Optional Future Extensions (Deferred / Opt-In)
-1. **Isolated `py(code)` Tool:** Add only if `coregrad-DSL` reaches a genuine expressivity ceiling on real local-research workloads (`python -I` + AST allowlist + `RLIMIT_CPU`/`RLIMIT_AS`).
-2. **Self-Contained Native-Space Embedder (`coregrad-doc-embed`):** Contrastively align a compact document encoder into `coregrad`'s frozen `final_norm(h_L)` query space. *Documented tradeoff:* cannot match a trillion-token generalist embedder (`google/embeddinggemma-2`) on rare domain/user entities without continued domain training over a user's corpus; hybrid `EmbeddingGemma 2` + BM25 remains the recommended default.
-3. **Remaining Phase 4A Ablations:** Cognitive Core Purity A/B (`0%` vs. `45%` `edu-en`) and GQA KV-bank injection verification on looped `32m-looped16-gru` checkpoints.
-4. **Zero-Training Personal Research (Default) & Opt-In Local Adaptation:** Run `coregrad index <local-markdown-dir> --use-embeddinggemma2` + `coregrad chat` against any private Markdown library with zero retraining; optionally hook private local corpora via gitignored `configs/sources.local.yaml` (strictly outside git).
+---
+
+### Phase 6 (Future Horizon): Formal Knowledge & Verified Neuro-Symbolic Interfacing
+Extend the cognitive-core thesis from *unstructured prose knowledge* (Markdown / `search`) to **formalized, typed, and executable knowledge** (ontologies, databases, codebases, and proof assistants like **Lean 4**), keeping the core compact while external engines serve as both library and infallible verifier:
+
+1. **Phase 6.1 (Tier 1 — Mounted Formal Knowledge Bases Inside `coregrad-DSL`):**
+   - Extend `coregrad-DSL` with mounted local **Datalog / Horn / ontology & SQLite stores** (`prove(kb="...", ...)`, `kb_query(...)`, read-only `sql("...")`) indexed both semantically (`EmbeddingGemma 2`) and by predicate/schema signature.
+   - `search` retrieves only the relevant axioms/schemas (~50–100 tokens), while `coregrad-DSL` executes exact deduction/aggregation — building directly on our `98.8%` `coregrad-DSL` accuracy with zero extra parameter overhead.
+2. **Phase 6.2 (Tier 2 — Typed Signature Search & Stateful Verifier Loop — Lean 4 / Python / SQL):**
+   - Extend `search` to index formal libraries by **both docstring semantics and exact type signatures / AST identifiers** (e.g., Lean 4 Mathlib declarations or local codebase APIs).
+   - Add a stateful formal verifier/REPL tool (`verify(lang, code)` / interactive Lean 4 tactic stepping via Pantograph/LeanDojo) so the core works in short, compiler-checked turns (emit 1 tactic or typed snippet → read exact remaining proof goal or type error → repair or conclude).
+   - Unlock **zero-hallucination formal verification**, automatic **RLVR (GRPO)** programmatic rewards from kernel/compiler pass-fail, and fast **test-time beam/MCTS tactic search** (leveraging our tiny core's high tokens/sec throughput).
+3. **Phase 6.3 (Tier 3 — `coregrad-DSL` as Universal Typed Glue Layer):**
+   - Unify pluggable formal backends (`prove`, SymPy, `kb_query`, `sql`, `lean`, isolated `py`) behind `coregrad-DSL` so the cognitive core masters one compact orchestration syntax while outsourcing both unstructured libraries (Phase 3) and formal mathematics/software libraries (Phase 6).
+
+#### Optional Extensions (Deferred / Opt-In)
+1. **Self-Contained Native-Space Embedder (`coregrad-doc-embed`):** Contrastively align a compact document encoder into `coregrad`'s frozen `final_norm(h_L)` query space. *Documented tradeoff:* cannot match a trillion-token generalist embedder (`google/embeddinggemma-2`) on rare domain/user entities without continued domain training over a user's corpus; hybrid `EmbeddingGemma 2` + BM25 remains the recommended default.
+2. **Remaining Phase 4A Ablations:** Cognitive Core Purity A/B (`0%` vs. `45%` `edu-en`) and GQA KV-bank injection verification on looped `32m-looped16-gru` checkpoints.
+3. **Zero-Training Personal Research (Default) & Opt-In Local Adaptation:** Run `coregrad index <local-markdown-dir> --use-embeddinggemma2` + `coregrad chat` against any private Markdown library with zero retraining; optionally hook private local corpora via gitignored `configs/sources.local.yaml` (strictly outside git).
 
 ---
 
