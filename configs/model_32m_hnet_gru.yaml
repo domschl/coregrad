@@ -1,0 +1,23 @@
+# Gate 4 (Phase 5.3A): coregrad-Byte — H-Net Dynamic UTF-8 Patching + 2+4x3+2 Outer-GRU Core
+# Exact same active compute trunk as coregrad-32m-looped16-gru (d=512, 8Q/4KV, 2 enc + 4x3 GRU core + 2 dec),
+# replacing the 16k BPE table (8.4M params) with raw UTF-8 + 32 special tokens (288 vocab -> 0.15M params).
+name: coregrad-32m-hnet-gru
+vocab_size: 288
+max_seq_len: 4096
+d_model: 512
+n_heads: 8
+n_kv_heads: 4
+d_ff: 1408
+n_enc: 2
+n_core: 4
+n_loops: 3
+n_dec: 2
+window_size: 256
+target_ratio: 4.5
+ratio_loss_weight: 0.03
+rope_theta: 10000.0
+norm_eps: 1.0e-6
+qk_norm: true
+tie_embeddings: true
+loop_step_embed: true
+loop_mode: gru

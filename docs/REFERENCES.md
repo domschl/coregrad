@@ -40,7 +40,7 @@
 - **AdamW (Decoupled Weight Decay):** Loshchilov, I., & Hutter, F. (2019). *Decoupled Weight Decay Regularization.* ICLR 2019 (`arXiv:1711.05101`).
 - **Muon (MomentUm Orthogonalized by Newton-Schulz):**
   - Jordan, K., Jin, Y., Boza, V., You, J., Cesista, F., Newhouse, L., & Bernstein, J. (2024). *Muon: An Optimizer for Hidden Layers in Neural Networks* ([blog post](https://kellerjordan.github.io/posts/muon/)).
-  - Liu, J., et al. / Moonshot AI (2025). *Muon is Scalable for LLM Training* (Moonlight, `arXiv:2502.16982`) — motivates the RMS aspect-ratio scaling `0.2 * sqrt(max(rows, cols))` and decoupled weight decay in `src/coregrad/train/optim.py`.
+  - Liu, J., et al. / Moonshot AI (2025). *Muon is Scalable for LLM Training* (Moonlight, `arXiv:2502.16982`) — motivates decoupled weight decay for Muon (note: `src/coregrad/train/optim.py` uses Keller Jordan's `sqrt(max(1, rows/cols))` aspect scaling with full weight decay, verified via our Phase 4C diagnostic).
 - **Warmup–Stable–Decay (WSD) Schedule:**
   - Hu, S., Tu, Y., Han, X., et al. (2024). *MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies* (`arXiv:2404.06395`).
   - Hägele, A., Bakouch, E., Kosson, A., Ben Allal, L., von Werra, L., & Jaggi, M. (2024). *Scaling Laws and Compute-Optimal Training Beyond Fixed Training Durations.* NeurIPS 2024 (`arXiv:2405.18392`). Enables checkpoint-and-branch annealing without restarting pretraining.
@@ -78,3 +78,15 @@
 - **Memorizing Transformers:** Wu, Y., Rabe, M. N., Hutchins, D., & Szegedy, C. (2022). *Memorizing Transformers.* ICLR 2022 (`arXiv:2203.08913`).
 - **xRAG / Latent Embedding Injection:** Cheng, X., Wang, X., Zhang, X., Ge, T., Chen, S.-Q., Wei, F., Zhang, H., & Zhao, D. (2024). *xRAG: Extreme Context Compression for Retrieval-Augmented Generation with One Token.* NeurIPS 2024 (`arXiv:2405.13792`).
 - **Zero-Initialized Gated Cross-Attention (Flamingo-style retrofitting):** Alayrac, J.-B., Donahue, J., Luc, P., et al. (2022). *Flamingo: a Visual Language Model for Few-Shot Learning.* NeurIPS 2022 (`arXiv:2204.14198`).
+
+---
+
+## 8. Phase 5 Frontier (Dynamic Byte Patching & Multilingual Scaling Laws)
+
+- **Byte Latent Transformer (BLT):** Pagnoni, A., Pasunuru, R., Rodriguez, P., Nguyen, J., Muller, B., Li, M., Zhou, C., Yu, L., Weston, J., Zettlemoyer, L., Ghosh, G., Lewis, M., Holtzman, A., & Iyer, S. (2024). *Byte Latent Transformer: Patches Scale Better Than Tokens* (`arXiv:2412.09871`). Introduces entropy-based dynamic byte patching to eliminate fixed subword tokenizers without losing effective context length.
+- **H-Net (End-to-End Dynamic Chunking):** Hwang, S., Wang, B., & Gu, A. (2025). *Dynamic Chunking for End-to-End Hierarchical Sequence Modeling* (`arXiv:2507.07955`). Introduces cosine-similarity boundary routing, ratio load-balancing loss, and EMA/STE smoothing upsampling so byte-to-chunk compression is learned 100% end-to-end with gradients.
+- **Multilingual Capacity Interference & Scaling Laws:**
+  - Conneau, A., Khandelwal, K., Goyal, N., et al. (2020). *Unsupervised Cross-lingual Representation Learning at Scale (XLM-R).* ACL 2020 (`arXiv:1911.02116`) — characterizes the Curse of Multilinguality.
+  - Fernandes, P., Ghorbani, B., Garcia, X., Freitag, M., & Firat, O. (2023). *Scaling Laws for Multilingual Neural Machine Translation.* ICML 2023 (`arXiv:2302.09650`).
+  - Chang, T. A., Arnett, C., Tu, Z., & Bergen, B. K. (2024). *When is Multilinguality a Curse? Language Modeling for 250 High- and Low-Resource Languages* (`arXiv:2311.09205`).
+- **FineWeb-2 (Open Multilingual Corpus):** Penedo, G., Kydlíček, H., Sabolčec, V., Messmer, B., Foroutan, N., Jaggi, M., von Werra, L., & Wolf, T. (2025). *FineWeb2: One Pipeline to Scale Them All — Adapting Pre-Training Data Processing to Every Language* (`HuggingFaceFW/fineweb-2`, ODC-By).

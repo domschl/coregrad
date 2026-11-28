@@ -129,7 +129,9 @@ def build_optimizer(
             continue
         seen.add(id(p))
 
-        is_embed_or_head = "tok_emb" in name or "lm_head" in name or "loop_emb" in name
+        is_embed_or_head = (
+            "tok_emb" in name or "lm_head" in name or "loop_emb" in name or "router." in name
+        )
         if optimizer_type == "muon" and p.ndim == 2 and not is_embed_or_head:
             muon_params.append(p)
         elif p.ndim >= 2 and "loop_emb" not in name:

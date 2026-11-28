@@ -205,9 +205,40 @@ Running online GRPO (`group_size=6`, 200 steps, ~18 min on RTX 4070 Ti) directly
 
 ---
 
-## Chapter 9 — Where to Go Next (Phase 4 Open Research Exercises)
-Once you reproduce Gates 1 & 2, `coregrad` is designed as a fast single-GPU laboratory for cutting-edge small-LM research:
-1. **Essentialization Ladder:** Train `60M → 30M → 15M → 8M` cores on the locked Gate 2 suite to find the exact parameter cliff for tool use.
-2. **Looped / Recursive Transformers:** Replace 18 unique layers with 4–6 weight-shared layers looped 3–4× — can depth-without-parameters preserve 2-hop reasoning at 25M params?
-3. **Cognitive Core Purity Test:** Add Wikipedia back into pretraining at 30M scale — does memorizing trivia *hurt* externalized tool-use accuracy?
-4. **Latent Memory Bridge (Phase 4B):** Attach zero-initialized gated cross-attention (`tanh(α)`) + a middle-layer latent query head to let layers 9–15 attend directly to EmbeddingGemma 2 memory vectors without consuming text context tokens.
+## Chapter 9 — Phase 4 & 5 Empirical Milestones (Summary)
+All Phase 4 & 5.1–5.2 experiments are documented in full in [`docs/EXPERIMENTS.md`](EXPERIMENTS.md) and [`docs/DSL_REFERENCE.md`](DSL_REFERENCE.md):
+1. **Latent Memory Bridge (Phase 4B):** Learned Layer-18 `LatentQueryHead` hit `79.8% R@5` (`0` search tokens); retrofitted zero-init cross-attention was falsified by the `SHUFFLED` control (`Δ_causal ≈ 0`); precomputed GQA KV-bank injection achieved massive zero-training causal transfer (`Δ = −0.784 BPB` at `k=4`).
+2. **Looped Outer-GRU Core & Muon Stability (Phases 4A & 4C):** Fixing Muon aspect scaling (`sqrt(max(1, m/n))` + full WD) and introducing Huginn-style **`2` prelude + `4×3` Outer-GRU Depth-RNN + `2` coda** (`coregrad-32m-looped16-gru`, `33.04M`) halved sampled repetition (`18%` vs dense `36.5%`), beat `45m-dense` BPB (`0.847` vs `0.861`), and followed an exact Ornstein-Uhlenbeck weight-RMS law (`wRMS_eq ≈ 0.190 * sqrt(muon_lr / wd)`).
+3. **`coregrad-DSL` & Interleaved WSD (Phases 5.1 & 5.2):** BPE-aligned operator spacing (`a -> b`) restored exact token-ID copying (`+34%` ID / `+20%` OOD on unseen logic), and 50/50 interleaved masked WSD decay on `32m-looped16-gru` (`3.5B` tok) hit **perfect `100/100/100/100(0h)/100` Gate 2**, **`98.8%` locked `coregrad-DSL`** (`95%` unseen-vocab `prove()`), and `0.862` BPB with minimal forgetting.
+
+---
+
+## Chapter 10 — Beyond BPE: Self-Learned UTF-8 Dynamic Patching (H-Net) & Multilingual Capacity Scaling
+**Code:** [`src/coregrad/model/hnet.py`](../src/coregrad/model/hnet.py) · [`src/coregrad/tokenizer/byte_tok.py`](../src/coregrad/tokenizer/byte_tok.py)
+
+### 10.1 Why BPE Creates a Multilingual Usability Trap
+Once a `~25M` non-embedding `2+4×3+2` Outer GRU trunk proves sufficient as a cognitive core, the natural next step is supporting **real-world multilingual libraries**. However, subword BPE tokenizers impose two severe constraints:
+1. **The "Uncanny Valley" of Fixed Vocabularies:** Any fixed multilingual BPE between *one language* and *all languages* still misses the specific languages real users need (e.g., Polish, Finnish, Czech, Hebrew, Korean, Swahili). Expanding a BPE vocabulary later requires changing the embedding matrix and **retraining from scratch**.
+2. **Massive Embedding Tax & Boundary Aliasing:** Covering 6–8 writing systems with BPE consumes `33M–67M` parameters just in the `65k–131k` embedding/softmax table (larger than the entire reasoning trunk!), while space-sensitive byte-level BPE splits identical words differently after operators (`"treldon->plendor"` vs `" treldon -> plendor"`).
+
+### 10.2 Why Fixed-Stride Byte Compression Fails — and How H-Net Solves It
+Naive raw-UTF-8 byte models lose `~4×` effective context length (`2,048` bytes ≈ only `~500` tokens), while **fixed-stride 1D convolutions** (e.g., stride-4 chunking) suffer from **phase-shift aliasing** (shifting input by 1 byte scrambles every 4-byte chunk) and non-autoregressive decompression blur.
+
+Modern dynamic patching architectures solve both problems:
+- **BLT (Byte Latent Transformer, Meta AI 2024):** Uses a small frozen byte LM's next-byte entropy spikes $H(b_t \mid b_{<t})$ to start variable-length patches dynamically (~4.5–6 bytes/patch).
+- **H-Net (Hierarchical Network, Go & Gu 2025):** Eliminates the frozen entropy model and learns chunk boundaries **100% end-to-end via gradients**:
+  1. **Local Byte Encoder (`2` sliding-window causal layers, `W=256`):** Reads raw UTF-8 bytes (`0..255`) + `16` special protocol tokens (`256..271`) = **`272` total vocab (`0.14M` emb params)**.
+  2. **Cosine-Similarity Boundary Router:** Computes $p_t = \frac{1}{2}\left(1 - \frac{q_t^\top k_{t-1}}{\|q_t\|\|k_{t-1}\|}\right)$ between consecutive byte states (`p_0 = 1`), emitting a discrete chunk boundary $b_t = \mathbb{1}[p_t \ge 0.5]$ whenever semantics shift. A differentiable **ratio load-balancing loss** steers mean compression toward $R \approx 4.5\times$ bytes/chunk (`~9 KB` UTF-8 → `~2,048` chunks, preserving full effective context length!).
+  3. **Global `4×3` Outer-GRU Core:** Runs strictly at **chunk resolution** — our exact language-agnostic cognitive core.
+  4. **EMA Smoothing + Straight-Through Upsampler:** Runs a causal chunk-level EMA $\tilde{z}_m = p_{t_m} z_m + (1 - p_{t_m})\tilde{z}_{m-1}$, broadcasts $\tilde{z}_{c(t)}$ back to byte resolution, and multiplies by a straight-through confidence gate $g_t = \mathrm{STE}(p_t b_t + (1 - p_t)(1 - b_t))$ plus an encoder residual skip — allowing exact gradients to flow cleanly into both selected and unselected boundary decisions without RL variance.
+  5. **Local Byte Decoder (`2` sliding-window causal layers → `272`-way softmax):** Autoregressively predicts exact UTF-8 bytes with zero phase aliasing and exact tokenizer-agnostic loss $\mathrm{BPB} = \mathcal{L}_{\mathrm{CE}} / \ln 2$.
+
+### 10.3 Multilingual Capacity Scaling Law ($N_{\text{interface}}$ vs. $N_{\text{core}}$)
+Removing BPE removes the *vocabulary* lock-in, but model weights still follow a finite **capacity-interference law** across $K_{\mathrm{eff}}$ distinct language/script clusters:
+
+$$\mathrm{BPB}_i(N, D_i, K_{\mathrm{eff}}) \;\approx\; L_\infty \;+\; \left(\frac{N_0}{N \,/\, K_{\mathrm{eff}}^{\,\gamma}}\right)^{\alpha} \;+\; \left(\frac{D_0}{D_i}\right)^{\beta}, \qquad N^*(K_{\mathrm{eff}}) \;\approx\; N_{\mathrm{EN}} \cdot K_{\mathrm{eff}}^{\,\gamma}$$
+
+- **Interference exponent $\gamma$:** Typically $\gamma \approx 0.35\text{–}0.45$ across same-script languages (strong lexical/morphological sharing) and $\gamma \approx 0.55\text{–}0.70$ across orthogonal scripts (Latin, Cyrillic, Arabic, Devanagari, CJK). Supporting `6–8` orthogonal script families at English-equivalent quality predicts `~3×–4×` active compute capacity (`~75M–110M` active non-embedding params — comfortably inside 12 GB VRAM once the `33M–67M` BPE table is gone!).
+- **Split Interface vs. Core Capacity:** H-Net + `2+4×3+2` Outer GRU cleanly decouples script surface interference (**high $\gamma_{\text{iface}}$** in the local byte encoder/decoder & router) from language-agnostic reasoning (**low $\gamma_{\text{core}}$** in the shared `4×3` Outer-GRU core). Measuring $(\alpha, \gamma_{\text{same}}, \gamma_{\text{cross}})$ on a fast `$N \in \{15\text{M}, 30\text{M}, 65\text{M}\} \times K \in \{1, 2, 4\}$` grid directly pins down the optimal flagship capacity *and* leaves headroom for **on-demand continual language expansion** (adding unseen languages/scripts later via 1–2 hr interleaved branches with zero tokenizer changes).
+
+- **Further Study:** Pagnoni et al. *Byte Latent Transformer (BLT)* (`arXiv:2412.09871`); Hwang, Wang, & Gu *Dynamic Chunking for End-to-End Hierarchical Sequence Modeling (H-Net)* (`arXiv:2507.07955`); Conneau et al. *Unsupervised Cross-lingual Representation Learning at Scale* (`arXiv:1911.02116`); Fernandes et al. *Scaling Laws for Multilingual Neural Machine Translation* (`arXiv:2302.09650`).
