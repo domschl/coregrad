@@ -151,6 +151,7 @@ def main() -> int:
 
     def _save(path: Path, step: int, bytes_seen: int) -> None:
         tmp = path.with_suffix(".pt.tmp")
+        clean_sd = {k.replace("._orig_mod.", "."): v for k, v in model.state_dict().items()}
         torch.save(
             {
                 "step": step,
@@ -158,7 +159,7 @@ def main() -> int:
                 "best_bpb": best_bpb,
                 "model_type": "hnet_byte",
                 "model_config": asdict(mcfg),
-                "model_state_dict": model.state_dict(),
+                "model_state_dict": clean_sd,
                 "optimizer_state_dict": optimizer.state_dict(),
             },
             tmp,

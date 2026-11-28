@@ -77,6 +77,10 @@ class HNetConfig:
     loop_mode: str = "gru"
 
     def __post_init__(self) -> None:
+        self.target_ratio = float(self.target_ratio)
+        self.ratio_loss_weight = float(self.ratio_loss_weight)
+        self.rope_theta = float(self.rope_theta)
+        self.norm_eps = float(self.norm_eps)
         if self.d_model % self.n_heads != 0:
             raise ValueError(f"d_model ({self.d_model}) must be divisible by n_heads ({self.n_heads})")
         if self.n_heads % self.n_kv_heads != 0:

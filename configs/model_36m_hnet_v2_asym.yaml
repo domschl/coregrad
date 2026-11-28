@@ -22,7 +22,7 @@ chunk_bucket: 64
 target_ratio: 4.5
 ratio_loss_weight: 0.05
 rope_theta: 10000.0
-norm_eps: 1e-6
+norm_eps: 1.0e-6
 qk_norm: true
 tie_embeddings: true
 loop_step_embed: true

@@ -346,6 +346,24 @@ pr|ove|(|[| x| |: tr|el|don|, trel|don| |->| pl|end|or| |]|, x| |: plend|or|)
 
 **Gate 4 Step 1 Verdict — PASS:** With **23% fewer parameters (`25.59M` vs `33.04M`)** and **zero BPE tokenizer**, `coregrad-Byte` landed within **`+0.0181 BPB`** of `16k` BPE on English, **beat `16k` BPE outright on code (`−0.0318 BPB`)**, beat `16k` BPE on 4-way completions (`50.0%` vs `37.5%`), halved repetition (`8%` / `37%` vs `18%` / `76%`), generated 100% valid UTF-8 from step 300 onward, and self-discovered crisp word, Python keyword, and DSL operator (`|<=|`, `|->|`) boundaries purely from gradients.
 
+### 5.1 Gate 4 Step 2 — Byte-Level Phase 5 SFT, Gate 2 & `coregrad-DSL` Verification
+
+Fine-tuned `runs/gate4_32m_hnet_gru_1.2gb/best.pt` (`25.59M`, pretrained on only `1.20 GB` ≈ `300M` BPE-tok eq — `5×` less pretraining than our `1.5B` BPE runs!) with `2,400` masked SFT steps (`314.6M` bytes, `seq_len=4096`, `39.0 min`, `best_val_loss=0.3223`, `8.14 GB` VRAM):
+
+| Benchmark | `coregrad-Byte` `25.59M` (`300M` BPE-eq base, `4KB` ctx) | Ref: `25m-looped14` `16k`-BPE (`1.5B` base, `8KB` ctx) | Notes |
+|---|---:|---:|---|
+| **Gate 2 Tool Syntax** | **`100.0%` (`373/373`)** | `100.0%` | Zero byte syntax errors! |
+| **Gate 2 Calc Accuracy** | **`100.0%` (`100/100`)** | `98.0%` | Perfect exact byte arithmetic |
+| **Gate 2 Grounded Retrieval** | **`91.1%` (`82/90`)** | `86.7%` | Beats `25m-looped14` with `5×` less pretraining! |
+| **Gate 2 Citation Rate (Halluc.)** | **`96.7%` (`0` halluc.)** | `94.4%` (`0` halluc.) | Zero hallucinated doc IDs |
+| **Gate 2 Abstention** | **`100.0%` (`30/30`)** | `100.0%` | Perfect abstention |
+| **Locked `coregrad-DSL` (160 tasks)** | **`90.0%` (`144/160`, `100%` valid `153/153`)** | — | **`100%` `bindings`, `100%` `pipelines`, `100%` `symbolic`**, `60%` `logic` |
+| **OOD GSM8K EM / Syntax** | **`4.0%`** / **`100.0%` (`159/159`)** | `10.0%` / `100%` | Matches `125m` (`4%`) with `5×` less pretraining |
+| **OOD Chat Routing** | `75.0%` (`3/4`) | `100.0%` | — |
+| **OOD SQuAD v2 Cite / EM** | `0.0%` / `6.0%` *(4KB ctx clip!)* | `60.0%` / `14.0%` | `k=3` SQuAD passages (`~4.5–5.5 KB`) exceeded `4096 B` window → confirms need for **`8,192 B` context** in `CoreGradByteLM v2`! |
+
+**Gate 4 Verdict — PASSED (with clear v2 upgrade path):** A `25.59M` raw UTF-8 H-Net model with only `300M` BPE-eq pretraining achieved **`100%` tool syntax**, **`100%` calc**, **`91.1%` retrieval (`0` hallucinated)**, **`100%` abstention**, and **`100%` on DSL bindings, functional `|>` pipelines, and SymPy algebra/calculus** byte-by-byte. The SQuAD v2 `4 KB` clipping cleanly identifies why upgrading to **`CoreGradByteLM v2`** (`d_byte=384, d_core=768`, causal `Conv1d(k=4)`, `8,192`-byte context) is the right prerequisite before multi-script scaling.
+
 ### Remaining Optional Phase 4A Ablations
 - Cognitive Core Purity A/B (`25m` pretrained with `0%` web/encyclopedic `edu-en` vs. `45% edu-en`).
 - GQA KV-Bank scaling check on `45m` / `32m-looped16-gru`.
