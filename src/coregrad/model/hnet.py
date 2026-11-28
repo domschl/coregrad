@@ -525,7 +525,7 @@ class CoreGradByteLM(nn.Module):
         max_new_tokens: int = 256,
         temperature: float = 0.7,
         top_k: int | None = 40,
-        eos_id: int | None = None,
+        eos_token_id: int | None = None,
     ) -> torch.Tensor:
         self.eval()
         out = input_ids
@@ -545,6 +545,6 @@ class CoreGradByteLM(nn.Module):
                 probs = F.softmax(next_logits, dim=-1)
                 next_tok = torch.multinomial(probs, num_samples=1)
             out = torch.cat([out, next_tok], dim=1)
-            if eos_id is not None and bool((next_tok == eos_id).all()):
+            if eos_token_id is not None and bool((next_tok == eos_token_id).all()):
                 break
         return out
