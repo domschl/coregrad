@@ -64,6 +64,7 @@ def main() -> int:
     parser.add_argument("--log-interval", type=int, default=20)
     parser.add_argument("--eval-interval", type=int, default=300)
     parser.add_argument("--seed", type=int, default=1337)
+    parser.add_argument("--compile-blocks", action="store_true", help="torch.compile enc/core/dec blocks")
     parser.add_argument("--shards-dir", type=Path, default=None)
     args = parser.parse_args()
 
@@ -84,6 +85,13 @@ def main() -> int:
     mcfg_path = args.model_config if args.model_config.is_absolute() else (REPO_ROOT / args.model_config)
     mcfg = HNetConfig.from_yaml(mcfg_path, max_seq_len=max(args.seq_len, 4096))
     model = CoreGradByteLM(mcfg).to(dev)
+    if args.compile_blocks and dev.type == "cuda":
+        for i in range(len(model.enc_blocks)):
+            model.enc_blocks[i] = torch.compile(model.enc_blocks[i])  # type: ignore[assignment]
+        for i in range(len(model.core_blocks)):
+            model.core_blocks[i] = torch.compile(model.core_blocks[i], dynamic=True)  # type: ignore[assignment]
+        for i in range(len(model.dec_blocks)):
+            model.dec_blocks[i] = torch.compile(model.dec_blocks[i])  # type: ignore[assignment]
     optimizer = build_optimizer(
         model,
         optimizer_type=args.optimizer,

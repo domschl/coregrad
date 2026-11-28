@@ -119,3 +119,55 @@ def test_hnet_strict_causality_and_router_gradient_flow() -> None:
         except UnicodeDecodeError:
             if trim == 3:
                 raise
+
+
+def test_hnet_v2_asymmetric_and_causal_conv_strict_causality() -> None:
+    torch.manual_seed(123)
+    cfg = HNetConfig(
+        name="tiny-hnet-v2",
+        vocab_size=BYTE_VOCAB_SIZE,
+        max_seq_len=128,
+        d_model=32,
+        n_heads=4,
+        n_kv_heads=2,
+        d_ff=64,
+        d_core=64,
+        n_core_heads=4,
+        n_core_kv_heads=2,
+        d_core_ff=128,
+        n_enc=1,
+        n_core=2,
+        n_loops=2,
+        n_dec=1,
+        window_size=32,
+        conv_kernel=4,
+        chunk_bucket=8,
+        target_ratio=4.5,
+        ratio_loss_weight=0.05,
+    )
+    model = CoreGradByteLM(cfg)
+    x = torch.randint(32, 122, (2, 48))
+    y = torch.randint(32, 122, (2, 48))
+
+    model.eval()
+    x_mod = x.clone()
+    x_mod[:, 24:] = (x_mod[:, 24:] + 17) % 256
+    with torch.no_grad():
+        la, _ = model(x)
+        lb, _ = model(x_mod)
+    assert float((la[:, :24] - lb[:, :24]).abs().max().item()) < 1e-5
+
+    model.train()
+    _, loss, _ = model(x, y, return_aux=True)  # type: ignore[misc]
+    assert loss is not None and torch.isfinite(loss)
+    loss.backward()
+    for pname in (
+        "enc_blocks.0.local_conv.weight",
+        "router.q_proj.weight",
+        "core_in_proj.weight",
+        "core_blocks.0.attn.q_proj.weight",
+        "core_out_proj.weight",
+        "dec_blocks.0.local_conv.weight",
+    ):
+        p = dict(model.named_parameters())[pname]
+        assert p.grad is not None and float(p.grad.abs().sum().item()) > 0.0, f"Zero grad on {pname}"

@@ -55,11 +55,18 @@ class HNetConfig:
     n_heads: int = 8
     n_kv_heads: int = 4
     d_ff: int = 1408
+    # Optional asymmetric wider global core (d_core > d_model, as in H-Net); None -> uniform d_model
+    d_core: int | None = None
+    n_core_heads: int | None = None
+    n_core_kv_heads: int | None = None
+    d_core_ff: int | None = None
     n_enc: int = 2
     n_core: int = 4
     n_loops: int = 3
     n_dec: int = 2
     window_size: int = 256
+    conv_kernel: int = 0  # Optional causal depthwise Conv1d(k) inside local byte enc/dec blocks (0 = off)
+    chunk_bucket: int = 1  # Pad chunk length M to multiple of chunk_bucket for torch.compile stability
     target_ratio: float = 4.5
     ratio_loss_weight: float = 0.03
     rope_theta: float = 10000.0
@@ -74,12 +81,38 @@ class HNetConfig:
             raise ValueError(f"d_model ({self.d_model}) must be divisible by n_heads ({self.n_heads})")
         if self.n_heads % self.n_kv_heads != 0:
             raise ValueError(f"n_heads ({self.n_heads}) must be divisible by n_kv_heads ({self.n_kv_heads})")
+        if self.resolved_d_core % self.resolved_n_core_heads != 0:
+            raise ValueError(
+                f"d_core ({self.resolved_d_core}) must be divisible by n_core_heads ({self.resolved_n_core_heads})"
+            )
+        if self.resolved_n_core_heads % self.resolved_n_core_kv_heads != 0:
+            raise ValueError("n_core_heads must be divisible by n_core_kv_heads")
         if self.target_ratio <= 1.0:
             raise ValueError(f"target_ratio must be > 1.0, got {self.target_ratio}")
 
     @property
+    def resolved_d_core(self) -> int:
+        return self.d_model if self.d_core is None else self.d_core
+
+    @property
+    def resolved_n_core_heads(self) -> int:
+        return self.n_heads if self.n_core_heads is None else self.n_core_heads
+
+    @property
+    def resolved_n_core_kv_heads(self) -> int:
+        return self.n_kv_heads if self.n_core_kv_heads is None else self.n_core_kv_heads
+
+    @property
+    def resolved_d_core_ff(self) -> int:
+        return self.d_ff if self.d_core_ff is None else self.d_core_ff
+
+    @property
     def head_dim(self) -> int:
         return self.d_model // self.n_heads
+
+    @property
+    def core_head_dim(self) -> int:
+        return self.resolved_d_core // self.resolved_n_core_heads
 
     @property
     def effective_layers(self) -> int:
@@ -95,6 +128,22 @@ class HNetConfig:
             n_heads=self.n_heads,
             n_kv_heads=self.n_kv_heads,
             d_ff=self.d_ff,
+            rope_theta=self.rope_theta,
+            norm_eps=self.norm_eps,
+            qk_norm=self.qk_norm,
+            tie_embeddings=self.tie_embeddings,
+        )
+
+    def to_core_block_cfg(self) -> ModelConfig:
+        return ModelConfig(
+            name=self.name,
+            vocab_size=self.vocab_size,
+            max_seq_len=self.max_seq_len,
+            n_layer=1,
+            d_model=self.resolved_d_core,
+            n_heads=self.resolved_n_core_heads,
+            n_kv_heads=self.resolved_n_core_kv_heads,
+            d_ff=self.resolved_d_core_ff,
             rope_theta=self.rope_theta,
             norm_eps=self.norm_eps,
             qk_norm=self.qk_norm,
@@ -161,11 +210,17 @@ class SlidingWindowAttention(nn.Module):
 
 
 class LocalByteBlock(nn.Module):
-    """Pre-RMSNorm sliding-window causal Transformer block for local byte encoding/decoding."""
+    """Pre-RMSNorm sliding-window causal Transformer block with optional causal depthwise Conv1d(k)."""
 
     def __init__(self, cfg: HNetConfig) -> None:
         super().__init__()
         block_cfg = cfg.to_block_cfg()
+        self.conv_kernel = cfg.conv_kernel
+        if cfg.conv_kernel > 1:
+            self.conv_norm = RMSNorm(cfg.d_model, eps=cfg.norm_eps)
+            self.local_conv = nn.Conv1d(
+                cfg.d_model, cfg.d_model, kernel_size=cfg.conv_kernel, groups=cfg.d_model, bias=False
+            )
         self.attn_norm = RMSNorm(cfg.d_model, eps=cfg.norm_eps)
         self.attn = SlidingWindowAttention(cfg)
         self.mlp_norm = RMSNorm(cfg.d_model, eps=cfg.norm_eps)
@@ -179,6 +234,11 @@ class LocalByteBlock(nn.Module):
         block_mask: Any = None,
         attn_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        if self.conv_kernel > 1:
+            # Strictly causal left-padded depthwise 1D convolution over raw UTF-8 n-grams
+            c_in = self.conv_norm(x).transpose(1, 2)
+            c_in = F.pad(c_in, (self.conv_kernel - 1, 0))
+            x = x + F.silu(self.local_conv(c_in).transpose(1, 2))
         x = x + self.attn(self.attn_norm(x), cos, sin, block_mask=block_mask, attn_mask=attn_mask)
         x = x + self.mlp(self.mlp_norm(x))
         return x
@@ -256,25 +316,32 @@ class CoreGradByteLM(nn.Module):
     def __init__(self, cfg: HNetConfig) -> None:
         super().__init__()
         self.cfg = cfg
-        block_cfg = cfg.to_block_cfg()
+        core_cfg = cfg.to_core_block_cfg()
+        d_core = cfg.resolved_d_core
+        self.is_asymmetric = d_core != cfg.d_model
 
         self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
         self.enc_blocks = nn.ModuleList([LocalByteBlock(cfg) for _ in range(cfg.n_enc)])
         self.router = HNetRouter(cfg.d_model, target_ratio=cfg.target_ratio, eps=cfg.norm_eps)
 
-        # Global chunk-level Outer-GRU looped cognitive core
-        self.core_blocks = nn.ModuleList([TransformerBlock(block_cfg) for _ in range(cfg.n_core)])
+        # Optional asymmetric projection between local byte space (d_model) and global core (d_core)
+        if self.is_asymmetric:
+            self.core_in_proj = nn.Linear(cfg.d_model, d_core, bias=False)
+            self.core_out_proj = nn.Linear(d_core, cfg.d_model, bias=False)
+
+        # Global chunk-level Outer-GRU looped cognitive core (width d_core)
+        self.core_blocks = nn.ModuleList([TransformerBlock(core_cfg) for _ in range(cfg.n_core)])
         self.loop_emb: nn.Parameter | None = (
-            nn.Parameter(torch.zeros(cfg.n_loops, cfg.d_model))
+            nn.Parameter(torch.zeros(cfg.n_loops, d_core))
             if (cfg.n_loops > 1 and cfg.loop_step_embed)
             else None
         )
         self.use_gru_loop = cfg.n_loops > 1 and cfg.loop_mode == "gru"
         if self.use_gru_loop:
-            self.loop_e0_norm = RMSNorm(cfg.d_model, eps=cfg.norm_eps)
-            self.loop_s_norm = RMSNorm(cfg.d_model, eps=cfg.norm_eps)
-            self.loop_in_proj = nn.Linear(cfg.d_model * 2, cfg.d_model, bias=False)
-            self.loop_gate_proj = nn.Linear(cfg.d_model * 2, cfg.d_model, bias=True)
+            self.loop_e0_norm = RMSNorm(d_core, eps=cfg.norm_eps)
+            self.loop_s_norm = RMSNorm(d_core, eps=cfg.norm_eps)
+            self.loop_in_proj = nn.Linear(d_core * 2, d_core, bias=False)
+            self.loop_gate_proj = nn.Linear(d_core * 2, d_core, bias=True)
 
         # Residual bridge from byte encoder around global core into byte decoder
         self.res_proj = nn.Linear(cfg.d_model, cfg.d_model, bias=False)
@@ -287,6 +354,13 @@ class CoreGradByteLM(nn.Module):
         cos, sin = precompute_rope_freqs(cfg.head_dim, cfg.max_seq_len, cfg.rope_theta)
         self.register_buffer("rope_cos", cos, persistent=False)
         self.register_buffer("rope_sin", sin, persistent=False)
+        if cfg.core_head_dim != cfg.head_dim:
+            c_cos, c_sin = precompute_rope_freqs(cfg.core_head_dim, cfg.max_seq_len, cfg.rope_theta)
+            self.register_buffer("core_rope_cos", c_cos, persistent=False)
+            self.register_buffer("core_rope_sin", c_sin, persistent=False)
+        else:
+            self.register_buffer("core_rope_cos", cos, persistent=False)
+            self.register_buffer("core_rope_sin", sin, persistent=False)
         self._block_mask_cache: dict[tuple[int, str], Any] = {}
         self._cpu_mask_cache: dict[int, torch.Tensor] = {}
 
@@ -345,10 +419,10 @@ class CoreGradByteLM(nn.Module):
         return None, cm.to(device)
 
     def _run_global_core(self, z: torch.Tensor) -> tuple[torch.Tensor, float, float]:
-        """Run n_core x n_loops Outer-GRU depth core over padded chunk tensor (B, M, D)."""
+        """Run n_core x n_loops Outer-GRU depth core over padded chunk tensor (B, M, D_core)."""
         m_len = z.size(1)
-        cos = self.rope_cos[:, :, :m_len, :]
-        sin = self.rope_sin[:, :, :m_len, :]
+        cos = self.core_rope_cos[:, :, :m_len, :]
+        sin = self.core_rope_sin[:, :, :m_len, :]
 
         e0_norm = self.loop_e0_norm(z) if self.use_gru_loop else None
         s = z
@@ -416,6 +490,9 @@ class CoreGradByteLM(nn.Module):
         slot = b_mask.long().cumsum(dim=1) - 1  # (B, L) in [0, count_i - 1]
         counts = b_mask.long().sum(dim=1)  # (B,)
         max_chunks = max(1, int(counts.max().item()))
+        if self.cfg.chunk_bucket > 1 and max_chunks < seq_len:
+            bkt = self.cfg.chunk_bucket
+            max_chunks = min(seq_len, ((max_chunks + bkt - 1) // bkt) * bkt)
 
         z_in = h_enc.new_zeros((bsz, max_chunks, self.cfg.d_model))
         p_sel = p.new_ones((bsz, max_chunks))
@@ -425,7 +502,9 @@ class CoreGradByteLM(nn.Module):
         p_sel[batch_idx, slot_idx] = p[batch_idx, pos_idx]
 
         # 4. Global Outer-GRU core at chunk resolution (strictly causal: right padding never attended)
-        z_out, loop_cos_val, gate_mean_val = self._run_global_core(z_in)
+        z_core_in = self.core_in_proj(z_in) if self.is_asymmetric else z_in
+        z_core_out, loop_cos_val, gate_mean_val = self._run_global_core(z_core_in)
+        z_out = self.core_out_proj(z_core_out) if self.is_asymmetric else z_core_out
 
         # 5. Parallel O(log M) chunk EMA smoothing + STE confidence-gated upsampling + residual skip
         z_smooth = parallel_ema_scan(z_out, p_sel)  # (B, M, D)
