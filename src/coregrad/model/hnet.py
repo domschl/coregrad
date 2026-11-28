@@ -191,10 +191,11 @@ class HNetRouter(nn.Module):
         super().__init__()
         self.target_ratio = target_ratio
         self.eps = eps
-        self.norm = RMSNorm(d_model, eps=eps)
+        # LayerNorm (zero-mean) prevents shared DC drift across channels from collapsing cos_sim -> +1
+        self.norm = nn.LayerNorm(d_model, eps=eps)
         self.q_proj = nn.Linear(d_model, d_model, bias=False)
         self.k_proj = nn.Linear(d_model, d_model, bias=False)
-        # Learnable threshold shift lets ratio loss center R ~ target_ratio within ~20 steps
+        # Learnable threshold shift lets ratio loss center R ~ target_ratio smoothly
         self.bias = nn.Parameter(torch.zeros(()))
         # Initialize close to identity so initial cosine similarity is meaningful and well-conditioned
         nn.init.eye_(self.q_proj.weight)
