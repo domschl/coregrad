@@ -1,0 +1,23 @@
+# Phase 5.3B Stage 0 Scaling Grid (Small, ~14.6M): Uniform d=384 + Causal Conv1d(k=4) + 2+4x3+2 Outer GRU
+name: coregrad-15m-hnet-v2-conv
+vocab_size: 288
+max_seq_len: 8192
+d_model: 384
+n_heads: 6
+n_kv_heads: 3
+d_ff: 1024
+n_enc: 2
+n_core: 4
+n_loops: 3
+n_dec: 2
+window_size: 256
+conv_kernel: 4
+chunk_bucket: 64
+target_ratio: 4.5
+ratio_loss_weight: 0.03
+rope_theta: 10000.0
+norm_eps: 1.0e-6
+qk_norm: true
+tie_embeddings: true
+loop_step_embed: true
+loop_mode: gru

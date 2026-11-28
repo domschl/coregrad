@@ -33,6 +33,33 @@ _CHUNK_PROBES = (
     "prove([ x : treldon, treldon -> plendor ], x : plendor)",
 )
 
+_MULTILINGUAL_CHUNK_PROBES = (
+    "The quick brown fox jumps over the lazy dog.",
+    "Die schnelle braune Füchsin springt über den faulen Hund.",
+    "Быстрая коричневая лиса перепрыгивает через ленивую собаку.",
+    "الثعلب البني السريع يقفز فوق الكلب الكسول.",
+    "敏捷的棕色狐狸跳过了懒惰的狗。",
+)
+
+
+def _parse_mixture(spec: str | None) -> dict[str, float]:
+    if not spec:
+        return {"edu-en": 0.45, "cosmo": 0.25, "code-starcoder": 0.17, "finemath": 0.13}
+    weights: dict[str, float] = {}
+    for item in spec.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if "=" in item:
+            k, v = item.split("=", 1)
+            weights[k.strip()] = float(v.strip())
+        else:
+            weights[item] = 1.0
+    total = sum(weights.values())
+    if total <= 0:
+        raise ValueError(f"Invalid mixture weights: {spec!r}")
+    return {k: v / total for k, v in weights.items()}
+
 
 def _mean_rep4(sample_list: list[dict[str, str]]) -> float:
     rates: list[float] = []
@@ -66,6 +93,13 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--compile-blocks", action="store_true", help="torch.compile enc/core/dec blocks")
     parser.add_argument("--shards-dir", type=Path, default=None)
+    parser.add_argument(
+        "--mixture",
+        type=str,
+        default=None,
+        help="Comma-separated domain=weight pairs (e.g. 'en=0.25,ru=0.25,ar=0.25,zh=0.25')",
+    )
+    parser.add_argument("--multilingual-probes", action="store_true", help="Show 5-script UTF-8 chunk probes")
     args = parser.parse_args()
 
     os.environ.setdefault("TRITON_DEFAULT_FP_FUSION", "1")
@@ -116,7 +150,7 @@ def main() -> int:
         weight_decay=args.weight_decay,
     )
 
-    mixture = {"edu-en": 0.45, "cosmo": 0.25, "code-starcoder": 0.17, "finemath": 0.13}
+    mixture = _parse_mixture(args.mixture)
     bytes_per_step = args.seq_len * args.micro_batch * args.grad_accum
     total_steps = max(1, args.total_bytes // bytes_per_step)
     warmup_steps = int(total_steps * args.warmup_fraction)
@@ -186,18 +220,24 @@ def main() -> int:
         _set_compiled(False)
         model.eval()
         # Evaluate ~524k UTF-8 bytes/domain (~131k BPE tokens/domain, matching BPE eval window!)
+        eval_mb = min(args.micro_batch, 4)
+        eval_batches = max(1, (32 * 4) // eval_mb)
         bpb_res = evaluate_validation_bpb(
             model,
             shards_root,
             device=dev,
             seq_len=min(args.seq_len, 4096),
-            batch_size=4,
-            max_batches_per_domain=32,
+            batch_size=eval_mb,
+            max_batches_per_domain=eval_batches,
             use_bf16=amp_enabled,
         )
         summary = summarize_bpb(bpb_res)
-        mean_bpb = float(summary["mean_bpb"])  # type: ignore[arg-type]
         dom_bpb = {d: r.bpb for d, r in bpb_res.items()}
+        trained_doms = [d for d in mixture if d in dom_bpb]
+        if trained_doms:
+            mean_bpb = sum(dom_bpb[d] for d in trained_doms) / len(trained_doms)
+        else:
+            mean_bpb = float(summary["mean_bpb"])  # type: ignore[arg-type]
         gram = evaluate_grammar_pairs(model, tokenizer, device=dev, use_bf16=amp_enabled)
         comp = evaluate_completion_probes(model, tokenizer, device=dev, use_bf16=amp_enabled)
         samples = run_qualitative_suite(
@@ -230,7 +270,8 @@ def main() -> int:
             f"loop_cos={vitals['loop_cos']:.3f} gate={vitals['loop_gate_mean']:.2f}",
             flush=True,
         )
-        for p_txt in _CHUNK_PROBES:
+        probes = _MULTILINGUAL_CHUNK_PROBES if args.multilingual_probes else _CHUNK_PROBES
+        for p_txt in probes:
             chunks = model.inspect_chunks(p_txt, tokenizer, dev)
             preview = "|".join(chunks)
             print(f"  [chunks R={len(p_txt.encode('utf-8'))/max(len(chunks),1):.2f}] {preview}", flush=True)
