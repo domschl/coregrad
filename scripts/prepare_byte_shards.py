@@ -53,16 +53,12 @@ def _convert_split(
                     ep_i = int(ep)
                     if ep_i > start:
                         text = bpe_tok.decode(block[start:ep_i].tolist(), skip_special_tokens=True)
-                        raw = text.encode("utf-8")
-                        buf.extend(raw)
-                        total_utf8_bytes += len(raw)
+                        buf.extend(text.encode("utf-8"))
                     buf.append(byte_eos)
                     start = ep_i + 1
                 if start < len(block):
                     text = bpe_tok.decode(block[start:].tolist(), skip_special_tokens=True)
-                    raw = text.encode("utf-8")
-                    buf.extend(raw)
-                    total_utf8_bytes += len(raw)
+                    buf.extend(text.encode("utf-8"))
 
                 if buf:
                     if max_bytes is not None and total_tokens + len(buf) > max_bytes:
@@ -71,6 +67,7 @@ def _convert_split(
                     np_buf = np.array(buf, dtype=np.uint16)
                     f_out.write(np_buf.tobytes())
                     total_tokens += len(buf)
+                    total_utf8_bytes += int((np_buf < 256).sum())
                 if max_bytes is not None and total_tokens >= max_bytes:
                     break
             if max_bytes is not None and total_tokens >= max_bytes:
