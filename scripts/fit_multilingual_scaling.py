@@ -31,7 +31,7 @@ GRID_MIXS = [
 
 
 def _load_final_eval(run_dir: Path) -> dict[str, object] | None:
-    eval_path = run_dir / "eval.jsonl"
+    eval_path = run_dir / "evals.jsonl"
     if not eval_path.exists():
         return None
     lines = [ln.strip() for ln in eval_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
@@ -87,8 +87,6 @@ def main() -> int:
             table[(stag, mtag)] = ev
             doms = ev.get("domain_bpb", {})
             assert isinstance(doms, dict)
-            vitals = ev.get("vitals", {})
-            assert isinstance(vitals, dict)
 
             def _fmt(lang: str, d_map: dict[str, object] = doms, tr: list[str] = trained) -> str:
                 v = d_map.get(lang)
@@ -100,7 +98,7 @@ def main() -> int:
             print(
                 f"| `{n_m:.2f}M` | `{mtag}` (`K={k}`) | **{float(ev['mean_bpb']):.4f}** | "
                 f"{_fmt('en')} | {_fmt('de')} | {_fmt('ru')} | {_fmt('ar')} | {_fmt('zh')} | "
-                f"{float(vitals.get('compression_ratio', 0.0)):.2f} | {float(vitals.get('max_w_rms', 0.0)):.3f} |"
+                f"{float(ev.get('compression_ratio', 0.0)):.2f} | {float(ev.get('max_w_rms', 0.0)):.3f} |"
             )
 
     # Fit EN K=1 power law

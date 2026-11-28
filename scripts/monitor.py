@@ -23,9 +23,12 @@ def print_cli_summary(runs_dir: Path, run_name: str | None) -> int:
     print(f"Run: {target} ({len(metrics)} logged steps, {len(evals)} evals, {len(samples)} sample snapshots)")
     if metrics:
         m = metrics[-1]
+        is_byte = bool(data.get("meta", {}).get("byte_mode"))
+        amt_str = f"bytes={m['tokens']/1e6:.2f}MB" if is_byte else f"tokens={m['tokens']/1e6:.2f}M"
+        rate_str = f"{m['tok_s']:,.0f} {'B/s' if is_byte else 'tok/s'}"
         print(
-            f"  Latest step={m['step']:,} | tokens={m['tokens']/1e6:.2f}M | "
-            f"loss={m['loss']:.4f} | lr={m['lr']:.2e} | {m['tok_s']:,.0f} tok/s | "
+            f"  Latest step={m['step']:,} | {amt_str} | "
+            f"loss={m['loss']:.4f} | lr={m['lr']:.2e} | {rate_str} | "
             f"vram={m['vram_gb']:.2f} GB"
         )
     if evals:
