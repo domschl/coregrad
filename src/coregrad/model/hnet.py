@@ -387,6 +387,8 @@ class CoreGradByteLM(nn.Module):
         for block in [*self.enc_blocks, *self.core_blocks, *self.dec_blocks]:
             nn.init.normal_(block.attn.o_proj.weight, mean=0.0, std=residual_std)
             nn.init.normal_(block.mlp.w_down.weight, mean=0.0, std=residual_std)
+            if hasattr(block, "local_conv"):
+                nn.init.normal_(block.local_conv.weight, mean=0.0, std=residual_std)
 
     def num_parameters(self, non_embedding: bool = False) -> int:
         seen: set[int] = set()

@@ -1,0 +1,28 @@
+# Gate 4B Isolation (Arm 5): Asymmetric Width (d_byte=384, d_core=768), NO Conv1d, ratio_w=0.03
+# Cleanly isolates asymmetric byte/core width reallocation against v1_uniform (512/512) without Conv1d blur.
+name: coregrad-36m-hnet-v2b-asym-noconv
+vocab_size: 288
+max_seq_len: 8192
+d_model: 384
+n_heads: 6
+n_kv_heads: 3
+d_ff: 1024
+d_core: 768
+n_core_heads: 12
+n_core_kv_heads: 4
+d_core_ff: 2048
+n_enc: 2
+n_core: 4
+n_loops: 3
+n_dec: 2
+window_size: 256
+conv_kernel: 0
+chunk_bucket: 64
+target_ratio: 4.5
+ratio_loss_weight: 0.03
+rope_theta: 10000.0
+norm_eps: 1.0e-6
+qk_norm: true
+tie_embeddings: true
+loop_step_embed: true
+loop_mode: gru
